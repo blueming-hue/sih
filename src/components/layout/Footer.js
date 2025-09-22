@@ -13,10 +13,10 @@ const Footer = () => {
               <div className="w-8 h-8 bg-primary-600 rounded-lg flex items-center justify-center">
                 <MessageCircle className="w-5 h-5 text-white" />
               </div>
-              <span className="text-xl font-bold">Digital Psychological Intervention System</span>
+              <span className="text-xl font-bold">MINDLY</span>
             </div>
             <p className="text-gray-300 mb-4 max-w-md">
-              A comprehensive mental health support platform designed specifically for college students. 
+              Mental Health INsights & Digital support for Learning Youth. 
               Providing AI-guided assistance, professional counselling, and peer support in a safe, 
               confidential environment.
             </p>
@@ -98,7 +98,7 @@ const Footer = () => {
         <div className="border-t border-gray-800 mt-8 pt-8">
           <div className="flex flex-col md:flex-row justify-between items-center">
             <p className="text-gray-400 text-sm">
-              © 2024 Digital Psychological Intervention System. All rights reserved.
+              © 2024 MINDLY. All rights reserved.
             </p>
             <div className="flex space-x-6 mt-4 md:mt-0">
               <Link to="/privacy" className="text-gray-400 hover:text-white text-sm transition-colors">

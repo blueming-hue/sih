@@ -1,7 +1,7 @@
 {
-  "name": "digital-psychological-intervention-system",
+  "name": "mindly",
   "version": "1.0.0",
-  "description": "Digital Psychological Intervention System for College Students",
+  "description": "MINDLY - Mental Health INsights & Digital support for Learning Youth",
   "private": true,
   "dependencies": {
     "@testing-library/jest-dom": "^5.16.4",

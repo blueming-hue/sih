@@ -1,4 +1,6 @@
-# Digital Psychological Intervention System (DPIS)
+# MINDLY - Mental Health Support for Students
+
+**Mental Health INsights & Digital support for Learning Youth**
 
 A comprehensive mental health support platform designed specifically for college students, providing AI-guided assistance, professional counseling, and peer support in a safe, confidential environment.
 

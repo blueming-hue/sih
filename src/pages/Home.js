@@ -74,24 +74,42 @@ const Home = () => {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="text-center">
             <h1 className="text-4xl md:text-6xl font-bold text-gray-900 mb-6">
-              Digital Psychological
-              <span className="text-primary-600 block">Intervention System</span>
+              <span className="bg-gradient-to-r from-primary-600 to-purple-600 bg-clip-text text-transparent animate-glow">
+                MINDLY
+              </span>
+              <div className="text-2xl md:text-4xl font-semibold text-gray-700 mt-4 space-y-2">
+                <div className="flex flex-wrap justify-center items-center gap-2">
+                  <span className="inline-block animate-float bg-gradient-to-r from-blue-600 to-blue-800 bg-clip-text text-transparent">
+                    Mental Health
+                  </span>
+                  <span className="text-primary-600 font-bold animate-pulse">
+                    INsights
+                  </span>
+                </div>
+                <div className="flex flex-wrap justify-center items-center gap-2">
+                  <span className="inline-block animate-float-delay bg-gradient-to-r from-green-600 to-green-800 bg-clip-text text-transparent">
+                    Digital support
+                  </span>
+                  <span className="text-primary-600 font-bold animate-pulse">
+                    Learning Youth
+                  </span>
+                </div>
+              </div>
             </h1>
-            <p className="text-xl text-gray-600 mb-8 max-w-3xl mx-auto">
-              A comprehensive mental health support platform designed specifically for college students. 
+            <p className="text-xl text-gray-600 mb-8 max-w-3xl mx-auto animate-fade-in">
               Get immediate AI assistance, professional counselling, and peer support in a safe, confidential environment.
             </p>
-            <div className="flex flex-col sm:flex-row gap-4 justify-center">
+            <div className="flex flex-col sm:flex-row gap-4 justify-center animate-slide-up">
               <Link
                 to="/register"
-                className="btn-primary text-lg px-8 py-3 inline-flex items-center justify-center"
+                className="btn-primary text-lg px-8 py-3 inline-flex items-center justify-center hover:scale-105 transition-transform duration-200"
               >
                 Get Started
                 <ArrowRight className="ml-2 w-5 h-5" />
               </Link>
               <Link
                 to="/login"
-                className="btn-secondary text-lg px-8 py-3"
+                className="btn-secondary text-lg px-8 py-3 hover:scale-105 transition-transform duration-200"
               >
                 Sign In
               </Link>
