@@ -1,6 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
-import { createForumPost, getForumPosts } from '../firebase/firestore';
+import { 
+  createForumPost,
+  subscribeForumPosts,
+  likeForumPost,
+  unlikeForumPost,
+  addForumComment,
+  subscribeForumComments
+} from '../firebase/firestore';
 import { 
   MessageCircle, 
   Heart, 
@@ -31,26 +38,25 @@ const Forum = () => {
     { id: 'general', name: 'General Support' }
   ];
 
+  // Real-time subscription for posts
   useEffect(() => {
-    loadPosts();
-  }, [selectedCategory]);
-
-  const loadPosts = async () => {
-    try {
-      setLoading(true);
-      const result = await getForumPosts(selectedCategory === 'all' ? null : selectedCategory);
-      if (result.success) {
-        setPosts(result.data);
-      } else {
+    setLoading(true);
+    const category = selectedCategory === 'all' ? null : selectedCategory;
+    const unsub = subscribeForumPosts(
+      category,
+      (items) => {
+        setPosts(items);
+        setLoading(false);
+      },
+      (err) => {
+        console.error('Forum subscription error', err);
         toast.error('Failed to load forum posts');
-      }
-    } catch (error) {
-      console.error('Error loading posts:', error);
-      toast.error('Error loading forum posts');
-    } finally {
-      setLoading(false);
-    }
-  };
+        setLoading(false);
+      },
+      100
+    );
+    return () => unsub && unsub();
+  }, [selectedCategory]);
 
   const handleCreatePost = async (postData) => {
     try {
@@ -63,13 +69,78 @@ const Forum = () => {
       if (result.success) {
         toast.success('Post created successfully!');
         setShowCreatePost(false);
-        loadPosts();
       } else {
         toast.error('Failed to create post');
       }
     } catch (error) {
       console.error('Error creating post:', error);
       toast.error('Error creating post');
+    }
+  };
+
+  const toggleLike = async (post) => {
+    try {
+      if (!user?.uid) return;
+      const liked = Array.isArray(post.likedBy) && post.likedBy.includes(user.uid);
+      if (liked) {
+        await unlikeForumPost(post.id, user.uid);
+      } else {
+        await likeForumPost(post.id, user.uid);
+      }
+    } catch (e) {
+      toast.error('Failed to update like');
+    }
+  };
+
+  // Comments state per postId
+  const [expandedPostId, setExpandedPostId] = useState(null);
+  const [commentsMap, setCommentsMap] = useState({});
+  const [newComment, setNewComment] = useState('');
+
+  // Subscribe to comments for the expanded post
+  useEffect(() => {
+    if (!expandedPostId) return;
+    const unsub = subscribeForumComments(
+      expandedPostId,
+      (items) => {
+        setCommentsMap((prev) => ({ ...prev, [expandedPostId]: items }));
+      },
+      (err) => console.error('Comments subscription error', err),
+      200
+    );
+    return () => unsub && unsub();
+  }, [expandedPostId]);
+
+  const handleAddComment = async (postId) => {
+    try {
+      if (!newComment.trim()) return;
+      await addForumComment(postId, {
+        userId: user.uid,
+        username: `Anon${(user?.uid || '').slice(0, 6)}`,
+        content: newComment.trim()
+      });
+      setNewComment('');
+      setExpandedPostId(postId); // keep open
+    } catch (e) {
+      toast.error('Failed to add comment');
+    }
+  };
+
+  const relativeTime = (date) => {
+    try {
+      const d = date?.toDate ? date.toDate() : new Date(date);
+      const diffMs = Date.now() - d.getTime();
+      const sec = Math.floor(diffMs / 1000);
+      if (sec < 60) return `${sec}s ago`;
+      const min = Math.floor(sec / 60);
+      if (min < 60) return `${min}m ago`;
+      const hr = Math.floor(min / 60);
+      if (hr < 24) return `${hr}h ago`;
+      const day = Math.floor(hr / 24);
+      if (day < 7) return `${day}d ago`;
+      return d.toLocaleDateString();
+    } catch {
+      return '';
     }
   };
 
@@ -118,8 +189,8 @@ const Forum = () => {
               <Users className="w-6 h-6 text-green-600" />
             </div>
             <div>
-              <p className="text-2xl font-bold text-gray-900">1,250</p>
-              <p className="text-gray-600">Active Members</p>
+              <p className="text-2xl font-bold text-gray-900">{new Set(posts.map(p => p.userId)).size}</p>
+              <p className="text-gray-600">Active Posters</p>
             </div>
           </div>
         </div>
@@ -129,7 +200,9 @@ const Forum = () => {
               <Heart className="w-6 h-6 text-purple-600" />
             </div>
             <div>
-              <p className="text-2xl font-bold text-gray-900">2,450</p>
+              <p className="text-2xl font-bold text-gray-900">{
+                posts.reduce((sum, p) => sum + (p.likes || 0) + (p.comments || 0), 0)
+              }</p>
               <p className="text-gray-600">Supportive Interactions</p>
             </div>
           </div>
@@ -219,25 +292,60 @@ const Forum = () => {
 
               <div className="flex items-center justify-between">
                 <div className="flex items-center space-x-4">
-                  <button className="flex items-center space-x-1 text-gray-600 hover:text-red-600 transition-colors">
+                  <button
+                    onClick={() => toggleLike(post)}
+                    className={`flex items-center space-x-1 ${Array.isArray(post.likedBy) && user?.uid && post.likedBy.includes(user.uid) ? 'text-red-600' : 'text-gray-600'} hover:text-red-600 transition-colors`}
+                    aria-label="Like post"
+                  >
                     <Heart className="w-4 h-4" />
                     <span>{post.likes || 0}</span>
                   </button>
-                  <button className="flex items-center space-x-1 text-gray-600 hover:text-blue-600 transition-colors">
+                  <button
+                    onClick={() => setExpandedPostId(expandedPostId === post.id ? null : post.id)}
+                    className="flex items-center space-x-1 text-gray-600 hover:text-blue-600 transition-colors"
+                    aria-label="Show comments"
+                  >
                     <MessageSquare className="w-4 h-4" />
                     <span>{post.comments || 0}</span>
                   </button>
                 </div>
                 <div className="flex items-center space-x-1 text-sm text-gray-500">
                   <Clock className="w-4 h-4" />
-                  <span>
-                    {post.createdAt?.toDate ? 
-                      post.createdAt.toDate().toLocaleDateString() : 
-                      new Date(post.createdAt).toLocaleDateString()
-                    }
-                  </span>
+                  <span>{relativeTime(post.createdAt)}</span>
                 </div>
               </div>
+
+              {/* Comments section */}
+              {expandedPostId === post.id && (
+                <div className="mt-4 border-t pt-4">
+                  <div className="space-y-3">
+                    {(commentsMap[post.id] || []).map((c) => (
+                      <div key={c.id} className="flex items-start gap-3">
+                        <div className="w-8 h-8 rounded-full bg-gray-200 flex items-center justify-center text-xs text-gray-600">
+                          {c.username?.[0] || 'U'}
+                        </div>
+                        <div className="flex-1">
+                          <div className="flex items-center gap-2 text-sm text-gray-600">
+                            <span className="font-medium text-gray-900">{c.username || 'Anonymous'}</span>
+                            <span>•</span>
+                            <span>{relativeTime(c.createdAt)}</span>
+                          </div>
+                          <p className="text-gray-800 text-sm">{c.content}</p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="mt-3 flex items-center gap-2">
+                    <input
+                      value={newComment}
+                      onChange={(e) => setNewComment(e.target.value)}
+                      placeholder="Write a supportive reply..."
+                      className="input-field flex-1"
+                    />
+                    <button onClick={() => handleAddComment(post.id)} className="btn-primary">Reply</button>
+                  </div>
+                </div>
+              )}
             </div>
           ))
         )}

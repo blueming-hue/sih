@@ -11,6 +11,9 @@ import {
   onSnapshot,
   serverTimestamp,
   Timestamp,
+  arrayUnion,
+  arrayRemove,
+  increment,
   
 } from 'firebase/firestore';
 import { db } from './config';
@@ -118,7 +121,8 @@ export const createForumPost = async (postData) => {
       ...postData,
       createdAt: serverTimestamp(),
       likes: 0,
-      comments: 0
+      comments: 0,
+      likedBy: []
     });
     return { success: true, id: docRef.id };
   } catch (error) {
@@ -153,6 +157,91 @@ export const getForumPosts = async (category = null) => {
   } catch (error) {
     return { success: false, error: error.message };
   }
+};
+
+// Real-time forum posts subscription (optionally filtered by category)
+export const subscribeForumPosts = (category, onData, onError = console.error, maxItems = 50) => {
+  let qRef = query(
+    collection(db, COLLECTIONS.FORUM_POSTS),
+    orderBy('createdAt', 'desc'),
+    limit(maxItems)
+  );
+  if (category) {
+    qRef = query(
+      collection(db, COLLECTIONS.FORUM_POSTS),
+      where('category', '==', category),
+      orderBy('createdAt', 'desc'),
+      limit(maxItems)
+    );
+  }
+  return onSnapshot(
+    qRef,
+    (snapshot) => {
+      const items = [];
+      snapshot.forEach((d) => items.push({ id: d.id, ...d.data() }));
+      onData(items);
+    },
+    (err) => onError(err)
+  );
+};
+
+// Toggle like on a forum post for a user. Caller should pass current like state.
+export const likeForumPost = async (postId, userId) => {
+  try {
+    await updateDoc(doc(db, COLLECTIONS.FORUM_POSTS, postId), {
+      likedBy: arrayUnion(userId),
+      likes: increment(1)
+    });
+    return { success: true };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+};
+
+export const unlikeForumPost = async (postId, userId) => {
+  try {
+    await updateDoc(doc(db, COLLECTIONS.FORUM_POSTS, postId), {
+      likedBy: arrayRemove(userId),
+      likes: increment(-1)
+    });
+    return { success: true };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+};
+
+// Comments subcollection helpers
+export const addForumComment = async (postId, comment) => {
+  try {
+    const commentRef = await addDoc(collection(db, `${COLLECTIONS.FORUM_POSTS}/${postId}/comments`), {
+      ...comment,
+      createdAt: serverTimestamp()
+    });
+    // increment comment count on post
+    await updateDoc(doc(db, COLLECTIONS.FORUM_POSTS, postId), {
+      comments: increment(1)
+    });
+    return { success: true, id: commentRef.id };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+};
+
+export const subscribeForumComments = (postId, onData, onError = console.error, maxItems = 100) => {
+  const qRef = query(
+    collection(db, `${COLLECTIONS.FORUM_POSTS}/${postId}/comments`),
+    orderBy('createdAt', 'asc'),
+    limit(maxItems)
+  );
+  return onSnapshot(
+    qRef,
+    (snapshot) => {
+      const items = [];
+      snapshot.forEach((d) => items.push({ id: d.id, ...d.data() }));
+      onData(items);
+    },
+    (err) => onError(err)
+  );
 };
 
 // Journal functions
