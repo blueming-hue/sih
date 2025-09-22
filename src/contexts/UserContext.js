@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { useAuth } from './AuthContext';
-import { getAssessments, getJournalEntries } from '../firebase/firestore';
+import { getAssessments, subscribeJournalEntries } from '../firebase/firestore';
 
 const UserContext = createContext();
 
@@ -25,6 +25,32 @@ export const UserProvider = ({ children }) => {
     }
   }, [user, userData]);
 
+  // Real-time subscription for journal entries for the logged-in user
+  useEffect(() => {
+    let unsub;
+    if (user && user.uid) {
+      try {
+        unsub = subscribeJournalEntries(
+          user.uid,
+          (items) => {
+            setJournalEntries(items);
+          },
+          (err) => {
+            console.error('UserContext journal subscription error', err);
+          },
+          300
+        );
+      } catch (e) {
+        console.error('Failed to subscribe to journals', e);
+      }
+    } else {
+      setJournalEntries([]);
+    }
+    return () => {
+      if (unsub) unsub();
+    };
+  }, [user?.uid]);
+
   const loadUserData = async () => {
     setLoading(true);
     try {
@@ -32,12 +58,6 @@ export const UserProvider = ({ children }) => {
       const assessmentsResult = await getAssessments(user.uid);
       if (assessmentsResult.success) {
         setAssessments(assessmentsResult.data);
-      }
-
-      // Load journal entries
-      const journalResult = await getJournalEntries(user.uid);
-      if (journalResult.success) {
-        setJournalEntries(journalResult.data);
       }
     } catch (error) {
       console.error('Error loading user data:', error);
@@ -51,7 +71,7 @@ export const UserProvider = ({ children }) => {
   };
 
   const addJournalEntry = (entry) => {
-    setJournalEntries(prev => [entry, ...prev]);
+    // Snapshot listener will update state; no local push to avoid duplicates
   };
 
   const updateJournalEntry = (entryId, updates) => {

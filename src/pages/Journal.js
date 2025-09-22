@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useUser } from '../contexts/UserContext';
 import { createJournalEntry, getJournalEntries } from '../firebase/firestore';
+import { Timestamp } from 'firebase/firestore';
 import { 
   Plus, 
   Edit, 
@@ -102,20 +103,29 @@ const Journal = () => {
     
     const matchesDate = !selectedDate || (() => {
       try {
+        // Normalize to local YYYY-MM-DD for comparison
+        const toLocalKey = (d) => {
+          const y = d.getFullYear();
+          const m = String(d.getMonth() + 1).padStart(2, '0');
+          const da = String(d.getDate()).padStart(2, '0');
+          return `${y}-${m}-${da}`;
+        };
         let entryDate;
         if (entry.createdAt?.toDate) {
           entryDate = entry.createdAt.toDate();
         } else if (entry.createdAt) {
           entryDate = new Date(entry.createdAt);
+        } else if (entry.timestamp?.toDate) {
+          entryDate = entry.timestamp.toDate();
+        } else if (entry.timestamp) {
+          entryDate = new Date(entry.timestamp);
         } else {
           return false;
         }
-        
         if (isNaN(entryDate.getTime())) {
           return false;
         }
-        
-        return entryDate.toISOString().split('T')[0] === selectedDate;
+        return toLocalKey(entryDate) === selectedDate;
       } catch (error) {
         return false;
       }
@@ -378,24 +388,31 @@ const Journal = () => {
 
         {/* Sidebar */}
         <div className="lg:col-span-1">
-          {/* Recent Entries */}
+          {/* Motivational Tip (rotates weekly) */}
           <div className="card mb-6">
-            <h3 className="text-lg font-semibold text-gray-900 mb-4">Recent Entries</h3>
-            <div className="space-y-3">
-              {recentEntries.map((entry) => (
-                <div key={entry.id} className="flex items-center space-x-3 p-3 bg-gray-50 rounded-lg">
-                  {getMoodIcon(entry.mood)}
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-gray-900 truncate">
-                      {entry.title}
-                    </p>
-                    <p className="text-xs text-gray-500">
-                      {formatDate(entry.createdAt)}
-                    </p>
-                  </div>
+            <h3 className="text-lg font-semibold text-gray-900 mb-2">Weekly Motivational Tip</h3>
+            {(() => {
+              const tips = [
+                'Small steps every day count more than giant leaps once in a while.',
+                'Your feelings are valid. Give yourself permission to feel and heal.',
+                'Progress is progress, no matter how small. Celebrate tiny wins.',
+                'Breathe in for 4, hold for 4, out for 6. Repeat 5 times.',
+                'Take a 5‑minute walk today. Movement lifts mood.',
+                'Write down 3 things you are grateful for today.',
+                'Talk to someone you trust. Sharing lightens the load.',
+                'Sleep is self‑care. Aim for a consistent bedtime routine.',
+                'Be kind to yourself. You’re doing the best you can with what you have.',
+                'Your story matters. Keep showing up for yourself.'
+              ];
+              const weekIndex = Math.floor(Date.now() / (7 * 24 * 60 * 60 * 1000)) % tips.length;
+              const tip = tips[weekIndex];
+              return (
+                <div className="p-4 bg-primary-50 rounded-lg border border-primary-100">
+                  <p className="text-gray-800">{tip}</p>
+                  <p className="text-xs text-gray-500 mt-3">Rotates weekly</p>
                 </div>
-              ))}
-            </div>
+              );
+            })()}
           </div>
 
           {/* Mood Trends */}
@@ -444,7 +461,14 @@ const JournalEntryModal = ({ entry, onClose, onSubmit }) => {
     title: entry?.title || '',
     content: entry?.content || '',
     mood: entry?.mood || 5,
-    tags: entry?.tags?.join(', ') || ''
+    tags: entry?.tags?.join(', ') || '',
+    date: (() => {
+      const d = new Date();
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, '0');
+      const da = String(d.getDate()).padStart(2, '0');
+      return `${y}-${m}-${da}`;
+    })()
   });
 
   const handleSubmit = (e) => {
@@ -454,9 +478,32 @@ const JournalEntryModal = ({ entry, onClose, onSubmit }) => {
       return;
     }
 
+    // Validate date
+    let createdAtTs = null;
+    if (formData.date) {
+      const selected = new Date(formData.date);
+      if (isNaN(selected.getTime())) {
+        toast.error('Invalid date');
+        return;
+      }
+      const today = new Date();
+      // Normalize both to start of day for comparison
+      selected.setHours(0,0,0,0);
+      today.setHours(0,0,0,0);
+      if (selected > today) {
+        toast.error('Date cannot be in the future');
+        return;
+      }
+      createdAtTs = Timestamp.fromDate(selected);
+    }
+
     const entryData = {
-      ...formData,
-      tags: formData.tags ? formData.tags.split(',').map(tag => tag.trim()).filter(tag => tag) : []
+      title: formData.title,
+      content: formData.content,
+      mood: formData.mood,
+      tags: formData.tags ? formData.tags.split(',').map(tag => tag.trim()).filter(tag => tag) : [],
+      // Only set createdAt if user provided a date; otherwise Firestore helper will use serverTimestamp()
+      ...(createdAtTs ? { createdAt: createdAtTs } : {})
     };
 
     if (entry) {
@@ -514,6 +561,20 @@ const JournalEntryModal = ({ entry, onClose, onSubmit }) => {
                 <span className="font-medium text-lg">{formData.mood}</span>
                 <span>10 (Very High)</span>
               </div>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Date
+              </label>
+              <input
+                type="date"
+                value={formData.date}
+                onChange={(e) => setFormData({ ...formData, date: e.target.value })}
+                className="input-field"
+                max={(new Date()).toISOString().split('T')[0]}
+              />
+              <p className="text-xs text-gray-500 mt-1">Defaults to today if not changed. Entries are grouped by day.</p>
             </div>
 
             <div>

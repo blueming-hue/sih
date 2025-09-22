@@ -1,0 +1,9 @@
+{
+  "projects": {
+    "default": "mindly-default"
+  },
+  "firestore": {
+    "rules": "firestore.rules",
+    "indexes": "firestore.indexes.json"
+  }
+}

@@ -3,8 +3,6 @@ import {
   doc, 
   addDoc, 
   updateDoc, 
-  deleteDoc, 
-  getDoc, 
   getDocs, 
   query, 
   where, 
@@ -12,8 +10,8 @@ import {
   limit,
   onSnapshot,
   serverTimestamp,
-  arrayUnion,
-  arrayRemove
+  Timestamp,
+  
 } from 'firebase/firestore';
 import { db } from './config';
 
@@ -28,7 +26,46 @@ export const COLLECTIONS = {
   CHAT_SESSIONS: 'chat_sessions',
   CHAT_MESSAGES: 'chat_messages',
   ASSESSMENTS: 'assessments',
-  NOTIFICATIONS: 'notifications'
+  NOTIFICATIONS: 'notifications',
+  MOOD_SCORES: 'mood_scores',
+  RESOURCES_VIEWED: 'resources_viewed'
+};
+
+// Fetch chat sessions for a user
+export const getChatSessions = async (userId, maxItems = 20) => {
+  try {
+    const q = query(
+      collection(db, COLLECTIONS.CHAT_SESSIONS),
+      where('userId', '==', userId),
+      orderBy('createdAt', 'desc'),
+      limit(maxItems)
+    );
+    const querySnapshot = await getDocs(q);
+    const sessions = [];
+    querySnapshot.forEach((doc) => sessions.push({ id: doc.id, ...doc.data() }));
+    return { success: true, data: sessions };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+};
+
+// Real-time listener for chat sessions
+export const subscribeChatSessions = (userId, onData, onError = console.error, maxItems = 20) => {
+  const q = query(
+    collection(db, COLLECTIONS.CHAT_SESSIONS),
+    where('userId', '==', userId),
+    orderBy('createdAt', 'desc'),
+    limit(maxItems)
+  );
+  return onSnapshot(
+    q,
+    (snapshot) => {
+      const items = [];
+      snapshot.forEach((doc) => items.push({ id: doc.id, ...doc.data() }));
+      onData(items);
+    },
+    (err) => onError(err)
+  );
 };
 
 // Appointment functions
@@ -121,10 +158,12 @@ export const getForumPosts = async (category = null) => {
 // Journal functions
 export const createJournalEntry = async (entryData) => {
   try {
-    const docRef = await addDoc(collection(db, COLLECTIONS.JOURNAL_ENTRIES), {
-      ...entryData,
-      createdAt: serverTimestamp()
-    });
+    const payload = { ...entryData };
+    // If a valid createdAt Timestamp is provided, use it; otherwise fallback to serverTimestamp
+    if (!payload.createdAt) {
+      payload.createdAt = serverTimestamp();
+    }
+    const docRef = await addDoc(collection(db, COLLECTIONS.JOURNAL_ENTRIES), payload);
     return { success: true, id: docRef.id };
   } catch (error) {
     return { success: false, error: error.message };
@@ -149,6 +188,25 @@ export const getJournalEntries = async (userId) => {
   } catch (error) {
     return { success: false, error: error.message };
   }
+};
+
+// Real-time listener for journal entries for a user
+export const subscribeJournalEntries = (userId, onData, onError = console.error, maxItems = 100) => {
+  const q = query(
+    collection(db, COLLECTIONS.JOURNAL_ENTRIES),
+    where('userId', '==', userId),
+    orderBy('createdAt', 'desc'),
+    limit(maxItems)
+  );
+  return onSnapshot(
+    q,
+    (snapshot) => {
+      const items = [];
+      snapshot.forEach((doc) => items.push({ id: doc.id, ...doc.data() }));
+      onData(items);
+    },
+    (err) => onError(err)
+  );
 };
 
 // Resource functions
@@ -259,4 +317,110 @@ export const getAssessments = async (userId) => {
   } catch (error) {
     return { success: false, error: error.message };
   }
+};
+
+// Mood score functions
+export const addMoodScore = async ({ userId, score, mood, note = null, recordedAt = null }) => {
+  try {
+    const docRef = await addDoc(collection(db, COLLECTIONS.MOOD_SCORES), {
+      userId,
+      score, // e.g., 0-100 or 1-5 scale
+      mood: mood || null, // optional label like 'happy', 'sad'
+      note, // optional free text
+      recordedAt: recordedAt ? recordedAt : serverTimestamp(),
+      createdAt: serverTimestamp()
+    });
+    return { success: true, id: docRef.id };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+};
+
+export const getMoodScores = async (userId, maxItems = 30) => {
+  try {
+    const q = query(
+      collection(db, COLLECTIONS.MOOD_SCORES),
+      where('userId', '==', userId),
+      orderBy('createdAt', 'desc'),
+      limit(maxItems)
+    );
+    const querySnapshot = await getDocs(q);
+    const items = [];
+    querySnapshot.forEach((doc) => items.push({ id: doc.id, ...doc.data() }));
+    return { success: true, data: items };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+};
+
+// Real-time listener for mood scores
+export const subscribeMoodScores = (userId, onData, onError = console.error, maxItems = 30) => {
+  const q = query(
+    collection(db, COLLECTIONS.MOOD_SCORES),
+    where('userId', '==', userId),
+    orderBy('createdAt', 'desc'),
+    limit(maxItems)
+  );
+  return onSnapshot(
+    q,
+    (snapshot) => {
+      const items = [];
+      snapshot.forEach((doc) => items.push({ id: doc.id, ...doc.data() }));
+      onData(items);
+    },
+    (err) => onError(err)
+  );
+};
+
+// Resources viewed (per-user activity) functions
+export const logResourceViewed = async ({ userId, resourceId, resourceType = null, title = null }) => {
+  try {
+    const docRef = await addDoc(collection(db, COLLECTIONS.RESOURCES_VIEWED), {
+      userId,
+      resourceId, // id from RESOURCES collection or external id
+      resourceType, // e.g., article, video
+      title,
+      viewedAt: serverTimestamp(),
+      createdAt: serverTimestamp()
+    });
+    return { success: true, id: docRef.id };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+};
+
+export const getResourcesViewed = async (userId, maxItems = 50) => {
+  try {
+    const q = query(
+      collection(db, COLLECTIONS.RESOURCES_VIEWED),
+      where('userId', '==', userId),
+      orderBy('createdAt', 'desc'),
+      limit(maxItems)
+    );
+    const querySnapshot = await getDocs(q);
+    const items = [];
+    querySnapshot.forEach((doc) => items.push({ id: doc.id, ...doc.data() }));
+    return { success: true, data: items };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+};
+
+// Real-time listener for resources viewed
+export const subscribeResourcesViewed = (userId, onData, onError = console.error, maxItems = 50) => {
+  const q = query(
+    collection(db, COLLECTIONS.RESOURCES_VIEWED),
+    where('userId', '==', userId),
+    orderBy('createdAt', 'desc'),
+    limit(maxItems)
+  );
+  return onSnapshot(
+    q,
+    (snapshot) => {
+      const items = [];
+      snapshot.forEach((doc) => items.push({ id: doc.id, ...doc.data() }));
+      onData(items);
+    },
+    (err) => onError(err)
+  );
 };

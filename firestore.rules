@@ -1,0 +1,72 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    // Checks ownership on existing document reads/updates/deletes
+    function isOwner() {
+      return isSignedIn() && request.auth.uid == resource.data.userId;
+    }
+
+    // Checks ownership on creates (use request.resource because resource doesn't exist yet)
+    function isOwnerOnCreate() {
+      return isSignedIn() && request.auth.uid == request.resource.data.userId;
+    }
+
+    // USERS collection: doc id should equal the user's uid
+    match /users/{userId} {
+      allow read: if isSignedIn() && request.auth.uid == userId;
+      allow create: if isSignedIn() && request.auth.uid == request.resource.id;
+      allow update, delete: if isSignedIn() && request.auth.uid == userId;
+    }
+
+    // Public RESOURCES catalog: readable by anyone, write-restricted (adjust as needed)
+    match /resources/{docId} {
+      allow read: if true;
+      allow write: if false; // Change to role-based check if you add admin roles
+    }
+
+    // Per-user collections: users can only access their own docs
+    match /journal_entries/{docId} {
+      allow create: if isOwnerOnCreate();
+      allow read, update, delete: if isOwner();
+    }
+
+    match /chat_sessions/{docId} {
+      allow create: if isOwnerOnCreate();
+      allow read, update, delete: if isOwner();
+    }
+
+    match /chat_messages/{docId} {
+      allow create: if isOwnerOnCreate();
+      allow read, update, delete: if isOwner();
+    }
+
+    match /assessments/{docId} {
+      allow create: if isOwnerOnCreate();
+      allow read, update, delete: if isOwner();
+    }
+
+    match /appointments/{docId} {
+      allow create: if isOwnerOnCreate();
+      allow read, update, delete: if isOwner();
+    }
+
+    match /notifications/{docId} {
+      allow create: if isOwnerOnCreate();
+      allow read, update, delete: if isOwner();
+    }
+
+    match /mood_scores/{docId} {
+      allow create: if isOwnerOnCreate();
+      allow read, update, delete: if isOwner();
+    }
+
+    match /resources_viewed/{docId} {
+      allow create: if isOwnerOnCreate();
+      allow read, update, delete: if isOwner();
+    }
+  }
+}

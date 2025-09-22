@@ -1,12 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { getResources } from '../firebase/firestore';
+import { logResourceViewed } from '../firebase/firestore';
+import { useAuth } from '../contexts/AuthContext';
 import { 
   BookOpen, 
   Play, 
   Headphones, 
   FileText, 
   Search, 
-  Filter,
   ExternalLink,
   Download,
   Eye,
@@ -15,6 +16,7 @@ import {
 import toast from 'react-hot-toast';
 
 const Resources = () => {
+  const { userData } = useAuth();
   const [resources, setResources] = useState([]);
   const [loading, setLoading] = useState(true);
   const [selectedCategory, setSelectedCategory] = useState('all');
@@ -95,9 +97,26 @@ const Resources = () => {
     return matchesCategory && matchesType && matchesSearch;
   });
 
-  const handleResourceClick = (resource) => {
-    // In a real app, this would open the resource or track the view
-    toast.success(`Opening ${resource.title}`);
+  const handleResourceClick = async (resource) => {
+    try {
+      if (userData?.uid) {
+        await logResourceViewed({
+          userId: userData.uid,
+          resourceId: resource.id,
+          resourceType: resource.type || null,
+          title: resource.title || null
+        });
+      }
+    } catch (e) {
+      // Silently ignore logging failures on UI click
+      console.warn('Failed to log resource view', e);
+    } finally {
+      toast.success(`Opening ${resource.title}`);
+      // If your resource has a URL, open it in a new tab
+      if (resource.url) {
+        window.open(resource.url, '_blank', 'noopener,noreferrer');
+      }
+    }
   };
 
   return (
