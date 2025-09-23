@@ -5,7 +5,7 @@ from textblob import TextBlob
 from sentiment.sentiment_analyzer import SentimentAnalyzer  # import your analyzer
 
 # # OpenRouter API info
-OPENROUTER_API_KEY = os.getenv('OPENROUTER_API_KEY')  # replace with your key
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")  # replace with your key
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 
 class MentalHealthChatbot:
