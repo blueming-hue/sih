@@ -279,13 +279,23 @@ export const getAdminOverviewCounts = async () => {
 
 export const subscribeAppointments = (filters, onData, onError = console.error, maxItems = 200) => {
   let clauses = [];
-  clauses.push(orderBy('appointmentDate', 'asc'));
   if (filters?.counsellorId) clauses.unshift(where('counsellorId', '==', filters.counsellorId));
   if (filters?.studentId) clauses.unshift(where('studentId', '==', filters.studentId));
   // Note: Firestore requires appropriate indexes for combined where+orderBy
   const qRef = query(collection(db, COLLECTIONS.APPOINTMENTS), ...clauses, limit(maxItems));
   return onSnapshot(qRef, (snap)=>{
-    const items = []; snap.forEach(d=>items.push({ id: d.id, ...d.data() })); onData(items);
+    const items = [];
+    snap.forEach(d=>items.push({ id: d.id, ...d.data() }));
+    // Client-side sort by date then time to avoid composite index needs
+    items.sort((a,b) => {
+      const ad = String(a.appointmentDate || '');
+      const bd = String(b.appointmentDate || '');
+      if (ad !== bd) return ad.localeCompare(bd);
+      const at = String(a.appointmentTime || '');
+      const bt = String(b.appointmentTime || '');
+      return at.localeCompare(bt);
+    });
+    onData(items);
   }, onError);
 };
 

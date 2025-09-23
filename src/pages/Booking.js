@@ -4,7 +4,8 @@ import { useAuth } from '../contexts/AuthContext';
 import { 
   subscribeCounsellors,
   subscribeAvailabilitySlots,
-  bookAppointmentWithSlot
+  bookAppointmentWithSlot,
+  subscribeAppointments
 } from '../firebase/firestore';
 import { 
   Calendar, 
@@ -27,6 +28,7 @@ const Booking = () => {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [counsellors, setCounsellors] = useState([]);
   const [slots, setSlots] = useState([]); // [{time, booked, active, ...}]
+  const [myAppointments, setMyAppointments] = useState([]);
   const { register, handleSubmit, formState: { errors }, setValue } = useForm();
 
   // Subscribe to counsellors
@@ -101,6 +103,23 @@ const Booking = () => {
     return () => unsub && unsub();
   }, [availabilityOwnerId, selectedDate]);
 
+  // Subscribe to student's booked appointments
+  useEffect(() => {
+    if (!userData?.uid) return;
+    const unsub = subscribeAppointments(
+      { studentId: userData.uid },
+      (items) => {
+        // Show upcoming first, then past; keep simple ascending by date as backend provides
+        setMyAppointments(items);
+      },
+      (err) => {
+        // eslint-disable-next-line no-console
+        console.error('Failed to load your appointments', err);
+      }
+    );
+    return () => unsub && unsub();
+  }, [userData?.uid]);
+
   const sessionTypes = [
     {
       id: 'video',
@@ -124,6 +143,28 @@ const Booking = () => {
       duration: '50 minutes'
     }
   ];
+
+  // Helpers
+  const sessionTypeLabel = (id) => {
+    const m = sessionTypes.find(t => t.id === id);
+    return m ? m.name : (id ? String(id).replace('-', ' ') : 'Session');
+  };
+
+  const computeApptStatus = (appt) => {
+    const raw = (appt.status || '').toLowerCase();
+    if (raw === 'cancelled' || raw === 'canceled') return 'canceled';
+    // Build a comparable Date from appointmentDate 'YYYY-MM-DD' and time 'HH:mm'
+    try {
+      const dateStr = String(appt.appointmentDate || '');
+      const timeStr = String(appt.appointmentTime || '00:00');
+      const [h, m] = timeStr.split(':').map(x => parseInt(x, 10));
+      const d = new Date(dateStr);
+      if (!Number.isNaN(h) && !Number.isNaN(m)) d.setHours(h, m, 0, 0);
+      return d.getTime() >= Date.now() ? 'upcoming' : 'completed';
+    } catch {
+      return 'upcoming';
+    }
+  };
 
   const getAvailableSlots = () => {
     if (!availabilityOwnerId || !selectedDate) return [];
@@ -422,7 +463,7 @@ const Booking = () => {
 
         {/* Booking Summary */}
         <div className="lg:col-span-1">
-          <div className="card sticky top-8">
+          <div className="card">
             <h3 className="text-lg font-semibold text-gray-900 mb-4">Booking Summary</h3>
             
             {selectedCounsellor && (
@@ -502,6 +543,45 @@ const Booking = () => {
                 </p>
               </div>
             </div>
+          </div>
+
+          {/* Student's Booked Appointments */}
+          <div className="mt-6 card">
+            <h3 className="text-lg font-semibold text-gray-900 mb-4">Your Booked Appointments</h3>
+            {myAppointments.length === 0 ? (
+              <div className="text-sm text-gray-500">No appointments yet. Book your first session above.</div>
+            ) : (
+              <div className="space-y-3">
+                {myAppointments.map((appt) => {
+                  const counsellor = counsellors.find(c => c.id === appt.counsellorId);
+                  const spec = counsellor?.specialization || 'Counselling';
+                  const status = computeApptStatus(appt);
+                  const statusClass = status === 'completed'
+                    ? 'bg-gray-100 text-gray-700 border-gray-200'
+                    : (status === 'canceled'
+                        ? 'bg-red-100 text-red-700 border-red-200'
+                        : 'bg-green-100 text-green-700 border-green-200');
+                  return (
+                    <div key={appt.id} className="p-3 rounded-lg border border-gray-200">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <p className="text-sm font-medium text-gray-900">
+                            {new Date(appt.appointmentDate).toLocaleDateString('en-US', {
+                              weekday: 'short', year: 'numeric', month: 'short', day: 'numeric'
+                            })} • {appt.appointmentTime}
+                          </p>
+                          <p className="text-xs text-gray-600">With {appt.counsellorName || counsellor?.name || 'Counsellor'}</p>
+                          <p className="text-xs text-gray-500">{spec} • {sessionTypeLabel(appt.sessionType)}</p>
+                        </div>
+                        <span className={`text-xs px-2 py-1 rounded border capitalize ${statusClass}`}>
+                          {status}
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
         </div>
       </div>
