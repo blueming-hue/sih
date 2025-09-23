@@ -39,6 +39,60 @@ export const COLLECTIONS = {
   RESOURCES_VIEWED: 'resources_viewed'
 };
 
+// Students: submit a rating for a counsellor after a completed session
+// Stores a rating document and updates aggregate fields on counsellor doc:
+// ratingCount, ratingSum, rating (average)
+export const submitCounsellorRating = async ({ counsellorId, studentId, appointmentId = null, stars }) => {
+  try {
+    const starsNum = Number(stars);
+    if (!counsellorId || !studentId || !(starsNum >= 1 && starsNum <= 5)) {
+      throw new Error('Invalid rating payload');
+    }
+    const ratingsColPath = `${COLLECTIONS.COUNSELLORS}/${counsellorId}/ratings`;
+    const ratingsColRef = collection(db, ratingsColPath);
+    const counsellorRef = doc(db, COLLECTIONS.COUNSELLORS, counsellorId);
+
+    // Use a transaction to both add rating doc and update aggregates safely
+    await runTransaction(db, async (tx) => {
+      // Use deterministic doc id to avoid duplicate ratings per appointment
+      const ratingDocRef = appointmentId
+        ? doc(db, ratingsColPath, String(appointmentId))
+        : doc(ratingsColRef);
+
+      // Prevent duplicate rating for same appointment
+      const existing = await tx.get(ratingDocRef);
+      if (existing.exists()) {
+        throw new Error('Rating already submitted for this appointment');
+      }
+
+      tx.set(ratingDocRef, {
+        studentId,
+        appointmentId: appointmentId || null,
+        stars: starsNum,
+        createdAt: serverTimestamp()
+      });
+
+      // Update aggregates
+      const snap = await tx.get(counsellorRef);
+      const data = snap.exists() ? snap.data() : {};
+      const prevCount = Number(data.ratingCount || 0);
+      const prevSum = Number(data.ratingSum || 0);
+      const newCount = prevCount + 1;
+      const newSum = prevSum + starsNum;
+      const newAvg = newCount > 0 ? Number((newSum / newCount).toFixed(2)) : 0;
+      tx.update(counsellorRef, {
+        ratingCount: newCount,
+        ratingSum: newSum,
+        rating: newAvg,
+        updatedAt: serverTimestamp()
+      });
+    });
+    return { success: true };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+};
+
  
 
 // Real-time resources subscriptions (students + counsellors unified)

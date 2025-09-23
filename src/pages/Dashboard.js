@@ -11,7 +11,8 @@ import {
   Users, 
   BookOpen, 
   FileText, 
-  Heart
+  Heart,
+  ClipboardList
 } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
 import toast from 'react-hot-toast';
@@ -36,6 +37,14 @@ const Dashboard = () => {
   ];
 
   const quickActions = [
+    {
+      title: 'Self-Assessment',
+      description: 'Quick mental health self-check',
+      icon: ClipboardList,
+      color: 'bg-pink-500',
+      href: '/assessment',
+      tooltip: 'Take PHQ-9, GAD-7, or GHQ-12 self-check'
+    },
     {
       title: 'Chat with AI',
       description: 'Get immediate support and guidance',
@@ -509,7 +518,7 @@ const Dashboard = () => {
         <div className="card">
           <h3 className="text-lg font-semibold text-gray-900 mb-4">Recent Activity</h3>
           <div className="space-y-3">
-            {recentActivity.map((activity) => {
+            {recentActivity.slice(0, 3).map((activity) => {
               const Icon = activity.icon;
               return (
                 <div key={activity.id} className="flex items-center space-x-3 p-3 rounded-lg bg-gray-50">
@@ -524,7 +533,7 @@ const Dashboard = () => {
               );
             })}
           </div>
-          {journalEntries?.length > journalRecentLimit && (
+          {recentActivity.length > 3 && (
             <div className="mt-3 text-right">
               <a href="/journal" className="text-sm text-primary-700 hover:underline">View all in Journal</a>
             </div>

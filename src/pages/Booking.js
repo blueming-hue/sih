@@ -228,44 +228,74 @@ const Booking = () => {
                 </div>
               </div>
 
-              {/* Counsellor Selection (real-time) */}
+              {/* Counsellor Selection (cards) */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-3">
                   Select a Counsellor
                 </label>
-                <div className="space-y-3">
-                  {counsellors.map((counsellor) => (
-                    <button
-                      key={counsellor.id}
-                      type="button"
-                      onClick={() => setSelectedCounsellor(counsellor.id)}
-                      className={`w-full p-4 border-2 rounded-lg text-left transition-colors ${
-                        selectedCounsellor === counsellor.id
-                          ? 'border-primary-500 bg-primary-50'
-                          : 'border-gray-200 hover:border-gray-300'
-                      }`}
-                    >
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <h3 className="font-medium text-gray-900">{counsellor.name}</h3>
-                          <p className="text-sm text-gray-600">{counsellor.specialization}</p>
-                          {counsellor.experience && (
-                            <p className="text-xs text-gray-500">{counsellor.experience} experience</p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  {counsellors.map((counsellor) => {
+                    const isSelected = selectedCounsellor === counsellor.id;
+                    const rating = Number(counsellor.rating || 0);
+                    const clamped = Math.max(0, Math.min(5, rating));
+                    const fullStars = Math.floor(clamped);
+                    const hasHalf = clamped - fullStars >= 0.5;
+                    const emptyStars = 5 - fullStars - (hasHalf ? 1 : 0);
+                    const exp = counsellor.experience;
+                    const expText = exp
+                      ? (/year/i.test(String(exp)) ? String(exp) : `${exp} years experience`)
+                      : null;
+                    return (
+                      <div
+                        key={counsellor.id}
+                        className={`p-4 border-2 rounded-xl transition-all ${
+                          isSelected ? 'border-primary-500 bg-primary-50 shadow' : 'border-gray-200 hover:border-gray-300'
+                        }`}
+                      >
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <h3 className="font-semibold text-gray-900 truncate">{counsellor.name}</h3>
+                            <p className="text-sm text-gray-600 truncate">{counsellor.specialization || 'General Counselling'}</p>
+                            {expText && (
+                              <p className="text-xs text-gray-500 mt-1">{expText}</p>
+                            )}
+                          </div>
+                          {isSelected && (
+                            <span className="text-xs font-medium px-2 py-1 rounded bg-primary-100 text-primary-700 border border-primary-200">Selected</span>
                           )}
                         </div>
-                        <div className="text-right">
-                          <div className="flex items-center space-x-1">
-                            <span className="text-sm font-medium text-gray-900">{counsellor.rating ?? '-'}</span>
-                            <span className="text-yellow-500">★</span>
+
+                        <div className="mt-3 flex items-center justify-between">
+                          <div className="flex items-center gap-1 text-yellow-500">
+                            {Array.from({ length: fullStars }).map((_, i) => (
+                              <span key={`full-${i}`}>★</span>
+                            ))}
+                            {hasHalf && <span>☆</span>}
+                            {Array.from({ length: emptyStars }).map((_, i) => (
+                              <span key={`empty-${i}`}>☆</span>
+                            ))}
+                            <span className="ml-1 text-xs text-gray-600">{clamped.toFixed(1)}</span>
                           </div>
+                          <button
+                            type="button"
+                            onClick={() => setSelectedCounsellor(counsellor.id)}
+                            className={`px-3 py-1.5 text-sm rounded-md border transition-colors ${
+                              isSelected
+                                ? 'bg-primary-600 text-white border-primary-600'
+                                : 'bg-white text-primary-700 border-primary-300 hover:bg-primary-50'
+                            }`}
+                            aria-pressed={isSelected}
+                          >
+                            {isSelected ? 'Selected' : 'Select'}
+                          </button>
                         </div>
                       </div>
-                    </button>
-                  ))}
-                  {counsellors.length === 0 && (
-                    <div className="text-sm text-gray-500">No counsellors available at the moment. Please check back later.</div>
-                  )}
+                    );
+                  })}
                 </div>
+                {counsellors.length === 0 && (
+                  <div className="text-sm text-gray-500">No counsellors available at the moment. Please check back later.</div>
+                )}
               </div>
 
               {/* Date Selection */}

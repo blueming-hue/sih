@@ -5,7 +5,7 @@ from textblob import TextBlob
 from sentiment.sentiment_analyzer import SentimentAnalyzer  # import your analyzer
 
 # OpenRouter API info
-OPENROUTER_API_KEY = "sk-or-v1-..."  # replace with your key
+OPENROUTER_API_KEY = "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"  # replace with your key
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 
 class MentalHealthChatbot:
@@ -33,9 +33,10 @@ class MentalHealthChatbot:
 
             # Step 3: Prepare request for OpenRouter
             headers = {
-                "Authorization": "Bearer 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",
-                "Content-Type": "application/json"
+            "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+            "Content-Type": "application/json"
             }
+
             data = {
                 "model": self.model,
                 "messages": [

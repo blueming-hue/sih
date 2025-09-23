@@ -80,15 +80,15 @@ const Footer = () => {
             <ul className="space-y-3">
               <li className="flex items-center space-x-2">
                 <Mail className="w-4 h-4 text-primary-400" />
-                <span className="text-gray-300">support@dpis.edu</span>
+                <span className="text-gray-300">support@mindly.edu</span>
               </li>
               <li className="flex items-center space-x-2">
                 <Phone className="w-4 h-4 text-primary-400" />
-                <span className="text-gray-300">+1 (555) 123-4567</span>
+                <span className="text-gray-300">+91 987654321</span>
               </li>
               <li className="flex items-center space-x-2">
                 <MapPin className="w-4 h-4 text-primary-400" />
-                <span className="text-gray-300">University Campus</span>
+                <span className="text-gray-300">SRM University AP</span>
               </li>
             </ul>
           </div>
@@ -98,7 +98,7 @@ const Footer = () => {
         <div className="border-t border-gray-800 mt-8 pt-8">
           <div className="flex flex-col md:flex-row justify-between items-center">
             <p className="text-gray-400 text-sm">
-              © 2024 MINDLY. All rights reserved.
+              © 2025 MINDLY. All rights reserved.
             </p>
             <div className="flex space-x-6 mt-4 md:mt-0">
               <Link to="/privacy" className="text-gray-400 hover:text-white text-sm transition-colors">

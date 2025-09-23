@@ -74,7 +74,7 @@ def chat():
                     'user_id': user_id,
                     'session_id': session_id,
                     'user_message': user_message,
-                    'ai_response': ai_response['response'],
+                    'ai_response': ai_response['ai_reply'],
                     'sentiment': ai_response.get('sentiment', {}),
                     'timestamp': datetime.now(),
                     'escalation_level': ai_response.get('escalation_level', 'low')

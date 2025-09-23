@@ -20,6 +20,7 @@ import Booking from './pages/Booking';
 import Forum from './pages/Forum';
 import Resources from './pages/Resources';
 import Journal from './pages/Journal';
+import Assessment from './pages/Assessment';
 import AdminDashboard from './pages/admin/AdminDashboard';
 import CounsellorsAdmin from './pages/admin/CounsellorsAdmin';
 import CounsellorDashboard from './pages/counsellor/Dashboard';
@@ -128,6 +129,15 @@ const AppContent = () => {
             element={
               <ProtectedRoute allowedRoles={['student']}>
                 <Journal />
+              </ProtectedRoute>
+            } 
+          />
+
+          <Route 
+            path="/assessment" 
+            element={
+              <ProtectedRoute allowedRoles={['student']}>
+                <Assessment />
               </ProtectedRoute>
             } 
           />
