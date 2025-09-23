@@ -8,7 +8,7 @@ import json
 from datetime import datetime
 import logging
 
-# Import our custom modules
+# Import custom modules
 from chatbot.mental_health_chatbot import MentalHealthChatbot
 from assessment.phq9_gad7 import PHQ9GAD7Assessment
 
@@ -41,6 +41,123 @@ except Exception as e:
 chatbot = MentalHealthChatbot()
 assessment = PHQ9GAD7Assessment()
 
+# -------- Counsellor API (server-side with service account) --------
+@app.route('/api/counsellor/appointments', methods=['GET'])
+def list_counsellor_appointments():
+    """
+    Returns appointments for a counsellor ordered by date/time.
+    Query params: counsellorId=<uid>, limit=<n>
+    """
+    try:
+        counsellor_id = request.args.get('counsellorId', '')
+        limit_n = int(request.args.get('limit', '100'))
+        if not counsellor_id:
+            return jsonify({'error': 'counsellorId is required'}), 400
+        if not db:
+            return jsonify({'appointments': []})
+
+        # Avoid composite index requirement by not ordering at query level
+        stream = db.collection('appointments').where('counsellorId', '==', counsellor_id).stream()
+        items = []
+        for doc in stream:
+            d = doc.to_dict()
+            d['id'] = doc.id
+            items.append(d)
+        # Sort in Python by date then time
+        items.sort(key=lambda x: (str(x.get('appointmentDate') or ''), str(x.get('appointmentTime') or '')))
+        if limit_n and limit_n > 0:
+            items = items[:limit_n]
+        return jsonify({'appointments': items})
+    except Exception as e:
+        logger.error(f"list_counsellor_appointments error: {e}")
+        return jsonify({'error': f'Failed to list appointments: {str(e)}'}), 500
+
+
+@app.route('/api/counsellor/appointments/<appointment_id>/status', methods=['PATCH'])
+def counsellor_update_status(appointment_id):
+    """
+    Body: { status: 'approved'|'pending'|'cancelled'|'canceled', counsellorId: '<uid>' }
+    """
+    try:
+        if not db:
+            return jsonify({'error': 'Database not available'}), 500
+        data = request.get_json() or {}
+        status = (data.get('status') or '').lower()
+        counsellor_id = data.get('counsellorId')
+        if status not in ('pending', 'approved', 'confirmed', 'cancelled', 'canceled'):
+            return jsonify({'error': 'Invalid status'}), 400
+        if not counsellor_id:
+            return jsonify({'error': 'counsellorId is required'}), 400
+
+        ref = db.collection('appointments').document(appointment_id)
+        snap = ref.get()
+        if not snap.exists:
+            return jsonify({'error': 'Not found'}), 404
+        appt = snap.to_dict()
+        if appt.get('counsellorId') != counsellor_id:
+            return jsonify({'error': 'Not your appointment'}), 403
+        ref.update({'status': status, 'updatedAt': datetime.now()})
+        return jsonify({'success': True})
+    except Exception as e:
+        logger.error(f"counsellor_update_status error: {e}")
+        return jsonify({'error': 'Internal server error'}), 500
+
+
+@app.route('/api/counsellor/appointments/<appointment_id>/reschedule', methods=['PATCH'])
+def counsellor_reschedule(appointment_id):
+    """
+    Body: { appointmentDate: 'YYYY-MM-DD', appointmentTime: 'HH:mm', counsellorId: '<uid>' }
+    """
+    try:
+        if not db:
+            return jsonify({'error': 'Database not available'}), 500
+        data = request.get_json() or {}
+        new_date = data.get('appointmentDate')
+        new_time = data.get('appointmentTime')
+        counsellor_id = data.get('counsellorId')
+        if not new_date or not new_time:
+            return jsonify({'error': 'appointmentDate and appointmentTime required'}), 400
+        if not counsellor_id:
+            return jsonify({'error': 'counsellorId is required'}), 400
+        ref = db.collection('appointments').document(appointment_id)
+        snap = ref.get()
+        if not snap.exists:
+            return jsonify({'error': 'Not found'}), 404
+        appt = snap.to_dict()
+        if appt.get('counsellorId') != counsellor_id:
+            return jsonify({'error': 'Not your appointment'}), 403
+        ref.update({'appointmentDate': new_date, 'appointmentTime': new_time, 'updatedAt': datetime.now()})
+        return jsonify({'success': True})
+    except Exception as e:
+        logger.error(f"counsellor_reschedule error: {e}")
+        return jsonify({'error': 'Internal server error'}), 500
+
+
+@app.route('/api/counsellor/availability/toggle', methods=['PATCH'])
+def counsellor_toggle_availability():
+    """
+    Body: { counsellorId, dateKey, time, active }
+    """
+    try:
+        if not db:
+            return jsonify({'error': 'Database not available'}), 500
+        data = request.get_json() or {}
+        counsellor_id = data.get('counsellorId')
+        date_key = data.get('dateKey')
+        time = data.get('time')
+        active = bool(data.get('active'))
+        if not counsellor_id or not date_key or not time:
+            return jsonify({'error': 'counsellorId, dateKey and time are required'}), 400
+        ref = db.document(f"counsellors/{counsellor_id}/availability/{date_key}/slots/{time}")
+        # Ensure doc exists
+        if not ref.get().exists:
+            ref.set({'time': time, 'booked': False})
+        ref.update({'active': active, 'updatedAt': datetime.now()})
+        return jsonify({'success': True})
+    except Exception as e:
+        logger.error(f"toggle_availability error: {e}")
+        return jsonify({'error': 'Internal server error'}), 500
+
 @app.route('/health', methods=['GET'])
 def health_check():
     return jsonify({
@@ -63,18 +180,15 @@ def chat():
         if not user_message:
             return jsonify({'error': 'Message is required'}), 400
 
-        # Get AI response from chatbot
         ai_response = chatbot.generate_response(user_message)
 
-
-        # Save conversation to Firebase
         if db and session_id:
             try:
                 conversation_data = {
                     'user_id': user_id,
                     'session_id': session_id,
                     'user_message': user_message,
-                    'ai_response': ai_response['ai_reply'],
+                    'ai_response': ai_response.get('ai_reply', ai_response.get('response', '')),
                     'sentiment': ai_response.get('sentiment', {}),
                     'timestamp': datetime.now(),
                     'escalation_level': ai_response.get('escalation_level', 'low')
@@ -202,7 +316,7 @@ def handle_escalation():
 @app.route('/api/analytics/sentiment-trends', methods=['GET'])
 def get_sentiment_trends():
     try:
-        user_id = request.args.get('user_id')
+        user_id = request.args.get('user_id', '')
         if not db:
             return jsonify({'error': 'Database not available'}), 500
 
