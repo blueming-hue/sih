@@ -14,7 +14,6 @@ import {
   Heart, 
   MessageSquare, 
   Plus, 
-  Filter,
   Search,
   Users,
   Clock

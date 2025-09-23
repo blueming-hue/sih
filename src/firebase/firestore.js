@@ -4,7 +4,6 @@ import {
   addDoc, 
   updateDoc, 
   getDocs, 
-  getDoc,
   setDoc,
   runTransaction,
   deleteDoc,
@@ -39,6 +38,8 @@ export const COLLECTIONS = {
   MOOD_SCORES: 'mood_scores',
   RESOURCES_VIEWED: 'resources_viewed'
 };
+
+ 
 
 // Real-time resources subscriptions (students + counsellors unified)
 export const subscribeResources = (category, onData, onError = console.error, maxItems = 500) => {
@@ -148,7 +149,7 @@ export const rescheduleAppointment = async (appointmentId, { appointmentDate, ap
 // Toggle availability slot 'active' flag by counsellor
 // (moved to bottom section: see Counsellor-specific helpers)
 
-// Subscribe counsellor appointments (optionally upcoming only)
+// Subscribe counsellor appointments 
 export const subscribeCounsellorAppointments = (counsellorId, onData, onError = console.error, upcomingOnly = true, maxItems = 200) => {
   if (!counsellorId) return () => {};
   const clauses = [where('counsellorId', '==', counsellorId), orderBy('appointmentDate', 'asc'), limit(maxItems)];
@@ -286,9 +287,10 @@ export const updateCounsellorActive = async (counsellorId, active) => {
 };
 
 // Upsert a single availability slot
-export const upsertAvailabilitySlot = async (counsellorId, dateKey, time) => {
+export const upsertAvailabilitySlot = async (counsellorId, dateKey, time, slotOwnerId = null) => {
   try {
-    const slotRef = doc(db, `${COLLECTIONS.COUNSELLORS}/${counsellorId}/availability/${dateKey}/slots/${time}`);
+    const ownerIdForSlot = slotOwnerId || counsellorId;
+    const slotRef = doc(db, `${COLLECTIONS.COUNSELLORS}/${ownerIdForSlot}/availability/${dateKey}/slots/${time}`);
     await setDoc(slotRef, {
       time,
       booked: false,
@@ -405,21 +407,66 @@ export const subscribeAllCounsellors = (onData, onError = console.error, maxItem
   );
 };
 
-// Availability slots modeled as: counsellors/{id}/availability/{yyyy-mm-dd}/slots/{time}
 // Each slot doc: { time: 'HH:mm', booked: boolean, bookedBy?: uid, sessionId?: string, updatedAt }
 export const subscribeAvailabilitySlots = (counsellorId, dateKey, onData, onError = console.error) => {
   if (!counsellorId || !dateKey) return () => {};
-  const slotsCol = collection(db, `${COLLECTIONS.COUNSELLORS}/${counsellorId}/availability/${dateKey}/slots`);
-  const qRef = query(slotsCol, orderBy('time', 'asc'));
-  return onSnapshot(
-    qRef,
-    (snapshot) => {
-      const items = [];
-      snapshot.forEach((d) => items.push({ id: d.id, ...d.data() }));
-      onData(items);
-    },
-    (err) => onError(err)
-  );
+  const toAltDateKey = (dk) => {
+    const parts = dk.split('-');
+    if (parts.length === 3) {
+      if (parts[0].length === 4) return `${parts[2]}-${parts[1]}-${parts[0]}`; // YYYY-MM-DD -> DD-MM-YYYY
+      if (parts[2].length === 4) return `${parts[2]}-${parts[1]}-${parts[0]}`; // DD-MM-YYYY -> YYYY-MM-DD
+    }
+    return dk;
+  };
+  const altDateKey = toAltDateKey(dateKey);
+  const col1 = collection(db, `${COLLECTIONS.COUNSELLORS}/${counsellorId}/availability/${dateKey}/slots`);
+  const col2 = altDateKey !== dateKey ? collection(db, `${COLLECTIONS.COUNSELLORS}/${counsellorId}/availability/${altDateKey}/slots`) : null;
+
+  const normalizeTime = (raw) => {
+    if (!raw) return '';
+    let t = String(raw).trim().replace('.', ':');
+    const m = t.match(/^(\d{1,2}):(\d{2})\s*([AaPp][Mm])$/);
+    if (m) {
+      let h = parseInt(m[1], 10);
+      const mm = m[2];
+      const ap = m[3].toUpperCase();
+      if (ap === 'PM' && h !== 12) h += 12;
+      if (ap === 'AM' && h === 12) h = 0;
+      return `${String(h).padStart(2,'0')}:${mm}`;
+    }
+    const hm = t.match(/^(\d{1,2}):(\d{2})$/);
+    if (hm) return `${String(parseInt(hm[1],10)).padStart(2,'0')}:${hm[2]}`;
+    return t;
+  };
+
+  let last1 = null;
+  let last2 = null;
+  const emit = () => {
+    const items = [];
+    const push = (snap) => {
+      snap && snap.forEach((d) => {
+        const data = d.data();
+        const time = normalizeTime(data.time || d.id);
+        items.push({ id: d.id, ...data, time });
+      });
+    };
+    push(last1);
+    push(last2);
+    const seen = new Set();
+    const uniq = items.filter(it => {
+      if (!it.time) return false;
+      if (seen.has(it.time)) return false;
+      seen.add(it.time);
+      return true;
+    });
+    const available = uniq.filter(s => (s.active !== false) && !s.booked);
+    available.sort((a,b)=> String(a.time).localeCompare(String(b.time)));
+    onData(available);
+  };
+
+  const u1 = onSnapshot(query(col1), (snap) => { last1 = snap; emit(); }, onError);
+  const u2 = col2 ? onSnapshot(query(col2), (snap) => { last2 = snap; emit(); }, onError) : null;
+  return () => { u1 && u1(); u2 && u2(); };
 };
 
 // Transactional booking to avoid double-booking
@@ -433,21 +480,38 @@ export const bookAppointmentWithSlot = async ({
   reason,
   urgency,
   previousCounseling,
-  notes
+  notes,
+  slotOwnerId = null, // if availability is stored under a different owner id (e.g., counsellor auth uid)
 }) => {
   try {
-    const slotRef = doc(db, `${COLLECTIONS.COUNSELLORS}/${counsellorId}/availability/${dateKey}/slots/${time}`);
+    const ownerIdForSlot = slotOwnerId || counsellorId;
+    const toAltDateKey = (dk) => {
+      const parts = dk.split('-');
+      if (parts.length === 3) {
+        if (parts[0].length === 4) return `${parts[2]}-${parts[1]}-${parts[0]}`; // YYYY->DD
+        if (parts[2].length === 4) return `${parts[2]}-${parts[1]}-${parts[0]}`; // DD->YYYY
+      }
+      return dk;
+    };
+    const altDateKey = toAltDateKey(dateKey);
+    const prefRef = doc(db, `${COLLECTIONS.COUNSELLORS}/${ownerIdForSlot}/availability/${dateKey}/slots/${time}`);
+    const altRef = altDateKey !== dateKey ? doc(db, `${COLLECTIONS.COUNSELLORS}/${ownerIdForSlot}/availability/${altDateKey}/slots/${time}`) : null;
     const apptRef = doc(collection(db, COLLECTIONS.APPOINTMENTS));
 
     await runTransaction(db, async (transaction) => {
-      const slotSnap = await transaction.get(slotRef);
-      if (!slotSnap.exists()) {
-        throw new Error('Slot not found');
+      let chosenRef = prefRef;
+      let slotSnap = await transaction.get(prefRef);
+      if (!slotSnap.exists() && altRef) {
+        const altSnap = await transaction.get(altRef);
+        if (altSnap.exists()) {
+          slotSnap = altSnap;
+          chosenRef = altRef;
+        }
       }
+      if (!slotSnap.exists()) throw new Error('Slot not found');
       const slot = slotSnap.data();
-      if (slot.booked) {
-        throw new Error('Slot already booked');
-      }
+      if (slot.booked) throw new Error('Slot already booked');
+
       // Create appointment
       transaction.set(apptRef, {
         studentId: user.uid,
@@ -467,7 +531,7 @@ export const bookAppointmentWithSlot = async ({
         createdAt: serverTimestamp()
       });
       // Mark slot booked
-      transaction.update(slotRef, {
+      transaction.update(chosenRef, {
         booked: true,
         bookedBy: user.uid,
         sessionId: apptRef.id,
@@ -480,6 +544,7 @@ export const bookAppointmentWithSlot = async ({
   }
 };
 
+// Fetch appointments for a user (student or counsellor)
 export const getAppointments = async (userId, userRole) => {
   try {
     let q;
@@ -496,13 +561,9 @@ export const getAppointments = async (userId, userRole) => {
         orderBy('appointmentDate', 'asc')
       );
     }
-    
     const querySnapshot = await getDocs(q);
     const appointments = [];
-    querySnapshot.forEach((doc) => {
-      appointments.push({ id: doc.id, ...doc.data() });
-    });
-    
+    querySnapshot.forEach((d) => appointments.push({ id: d.id, ...d.data() }));
     return { success: true, data: appointments };
   } catch (error) {
     return { success: false, error: error.message };

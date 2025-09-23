@@ -1,15 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../contexts/AuthContext';
-import { createChatSession, sendChatMessage, subscribeToChatMessages } from '../firebase/firestore';
+import { createChatSession, sendChatMessage } from '../firebase/firestore';
 import { 
   Send, 
   Bot, 
-  User, 
   Loader2, 
-  AlertTriangle,
-  Heart,
-  MessageCircle,
-  Sparkles
+  AlertTriangle 
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 
@@ -20,6 +16,7 @@ const Chatbot = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [sessionId, setSessionId] = useState(null);
   const [isTyping, setIsTyping] = useState(false);
+  const [hasShownWelcome, setHasShownWelcome] = useState(false); // New state
   const messagesContainerRef = useRef(null);
 
   const scrollToBottom = () => {
@@ -33,8 +30,8 @@ const Chatbot = () => {
     scrollToBottom();
   }, [messages]);
 
+  // Initialize chat session and show welcome once per session
   useEffect(() => {
-    // Initialize chat session
     const initializeSession = async () => {
       try {
         const result = await createChatSession({
@@ -42,18 +39,26 @@ const Chatbot = () => {
           type: 'ai_chatbot',
           status: 'active'
         });
-        
-        if (result.success) {
+
+        if (result.success && !hasShownWelcome) {
           setSessionId(result.id);
-          // Add welcome message
+
           const welcomeMessage = {
             id: 'welcome',
-            text: "Hello! I'm your AI mental health assistant. I'm here to provide support, coping strategies, and guidance. How are you feeling today?",
+            text: `Hello! I'm your AI mental health assistant. I'm here to provide support and guidance.\n
+Here are some helpful things to get you started:\n
+• General support and tips for mental well-being\n
+• Crisis resources if you ever feel unsafe or in distress\n
+• Regular check-ins to help you stay on track\n\n
+How are you feeling today?`,
             sender: 'bot',
             timestamp: new Date(),
-            type: 'welcome'
+            type: 'welcome',
+            suggestions: ['I feel stressed', 'I feel sad', 'I have sleep issues', 'I need help']
           };
+
           setMessages([welcomeMessage]);
+          setHasShownWelcome(true);
         }
       } catch (error) {
         console.error('Error initializing chat session:', error);
@@ -64,111 +69,81 @@ const Chatbot = () => {
     if (user) {
       initializeSession();
     }
-  }, [user]);
+  }, [user, hasShownWelcome]);
 
   const handleSendMessage = async () => {
-    if (!inputMessage.trim() || !sessionId) return;
+  if (!inputMessage.trim() || !sessionId) return;
 
-    const userMessage = {
-      id: Date.now().toString(),
+  const userMessage = {
+    id: Date.now().toString(),
+    text: inputMessage,
+    sender: 'user',
+    timestamp: new Date()
+  };
+
+  setMessages(prev => [...prev, userMessage]);
+  setInputMessage('');
+  setIsLoading(true);
+  setIsTyping(true);
+
+  try {
+    // Save user message to Firestore
+    await sendChatMessage({
+      sessionId,
       text: inputMessage,
       sender: 'user',
-      timestamp: new Date()
+      userId: user.uid
+    });
+
+    // Call Python backend
+    const response = await fetch('http://localhost:5000/api/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message: inputMessage, userId: user.uid, session_id: sessionId })
+    });
+
+    const data = await response.json();
+
+    // **Filter out repeated general support messages**
+    let botText = data.ai_reply;
+    let botSuggestions = data.sentiment?.recommendations || [];
+
+    if (messages.some(msg => msg.type === 'welcome')) {
+      // If the welcome has already been shown, remove any repetitive content
+      botText = botText.replace(/General support.*|Provide resources.*|Regular check-ins.*/gs, '').trim();
+      botSuggestions = botSuggestions.filter(s => !['General support and monitoring', 'Provide resources for future reference', 'Regular check-ins recommended'].includes(s));
+    }
+
+    const botMessage = {
+      id: (Date.now() + 1).toString(),
+      text: botText,
+      sender: 'bot',
+      timestamp: new Date(),
+      type: data.sentiment?.label || 'general',
+      suggestions: botSuggestions
     };
 
-    setMessages(prev => [...prev, userMessage]);
-    setInputMessage('');
-    setIsLoading(true);
-    setIsTyping(true);
+    setMessages(prev => [...prev, botMessage]);
 
-    try {
-      // Send message to Firestore
-      await sendChatMessage({
-        sessionId,
-        text: inputMessage,
-        sender: 'user',
-        userId: user.uid
-      });
+    // Save bot response to Firestore
+    await sendChatMessage({
+      sessionId,
+      text: botMessage.text,
+      sender: 'bot',
+      userId: user.uid,
+      messageType: botMessage.type
+    });
 
-      // Simulate AI response (in real implementation, this would call your Python backend)
-      setTimeout(async () => {
-        const aiResponse = generateAIResponse(inputMessage);
-        
-        const botMessage = {
-          id: (Date.now() + 1).toString(),
-          text: aiResponse.text,
-          sender: 'bot',
-          timestamp: new Date(),
-          type: aiResponse.type,
-          suggestions: aiResponse.suggestions
-        };
+    setIsLoading(false);
+    setIsTyping(false);
 
-        setMessages(prev => [...prev, botMessage]);
-        
-        // Save bot response to Firestore
-        await sendChatMessage({
-          sessionId,
-          text: aiResponse.text,
-          sender: 'bot',
-          userId: user.uid,
-          messageType: aiResponse.type
-        });
-
-        setIsLoading(false);
-        setIsTyping(false);
-      }, 1500);
-
-    } catch (error) {
-      console.error('Error sending message:', error);
-      toast.error('Failed to send message');
-      setIsLoading(false);
-      setIsTyping(false);
-    }
-  };
-
-  const generateAIResponse = (userMessage) => {
-    const message = userMessage.toLowerCase();
-    
-    // Simple keyword-based responses (in real implementation, this would be handled by your Python backend)
-    if (message.includes('stress') || message.includes('anxious') || message.includes('worried')) {
-      return {
-        text: "I understand you're feeling stressed or anxious. That's completely normal, especially during college. Here are some immediate coping strategies:\n\n1. Take 5 deep breaths - inhale for 4 counts, hold for 4, exhale for 6\n2. Try the 5-4-3-2-1 grounding technique: name 5 things you see, 4 you hear, 3 you touch, 2 you smell, 1 you taste\n3. Take a short walk or do some light stretching\n\nWould you like me to guide you through any of these techniques?",
-        type: 'coping_strategy',
-        suggestions: ['Breathing exercise', 'Grounding technique', 'Physical activity', 'Book a session']
-      };
-    }
-    
-    if (message.includes('sad') || message.includes('depressed') || message.includes('down')) {
-      return {
-        text: "I'm sorry you're feeling this way. It takes courage to reach out. Remember that these feelings are temporary and you're not alone.\n\nHere are some gentle suggestions:\n\n1. Practice self-compassion - treat yourself as you would a good friend\n2. Engage in activities you used to enjoy, even if you don't feel like it initially\n3. Maintain a basic routine - sleep, meals, and light activity\n4. Consider reaching out to a trusted friend or family member\n\nIf these feelings persist or feel overwhelming, I strongly recommend speaking with a professional counsellor. Would you like help booking a session?",
-        type: 'support',
-        suggestions: ['Book a session', 'Self-care tips', 'Crisis resources', 'Talk to someone']
-      };
-    }
-    
-    if (message.includes('sleep') || message.includes('insomnia') || message.includes('tired')) {
-      return {
-        text: "Sleep issues can really impact your mental health and academic performance. Here are some evidence-based sleep hygiene tips:\n\n1. Maintain a consistent sleep schedule, even on weekends\n2. Create a relaxing bedtime routine (reading, gentle music, meditation)\n3. Avoid screens 1 hour before bed - the blue light disrupts melatonin\n4. Keep your bedroom cool, dark, and quiet\n5. Avoid caffeine after 2 PM and large meals before bed\n\nWould you like a guided relaxation exercise to help you fall asleep?",
-        type: 'sleep_help',
-        suggestions: ['Sleep meditation', 'Relaxation exercise', 'Sleep schedule planner', 'Book a session']
-      };
-    }
-    
-    if (message.includes('help') || message.includes('crisis') || message.includes('emergency')) {
-      return {
-        text: "If you're in immediate danger or having thoughts of self-harm, please reach out for help right away:\n\n🚨 Emergency Resources:\n• National Suicide Prevention Lifeline: 988\n• Crisis Text Line: Text HOME to 741741\n• Emergency Services: 911\n\nI'm here to support you, but for immediate safety concerns, please contact these resources or go to your nearest emergency room.\n\nHow can I best support you right now?",
-        type: 'crisis_support',
-        suggestions: ['Crisis resources', 'Book immediate session', 'Talk to someone', 'Safety planning']
-      };
-    }
-    
-    // Default response
-    return {
-      text: "Thank you for sharing that with me. I'm here to listen and support you. Could you tell me more about what's on your mind? I can help with stress management, anxiety, sleep issues, or connect you with professional support if needed.",
-      type: 'general',
-      suggestions: ['Stress management', 'Anxiety help', 'Sleep support', 'Book a session']
-    };
-  };
+  } catch (error) {
+    console.error('Error sending message:', error);
+    toast.error('Failed to send message');
+    setIsLoading(false);
+    setIsTyping(false);
+  }
+};
 
   const handleSuggestionClick = (suggestion) => {
     setInputMessage(suggestion);
@@ -214,9 +189,7 @@ const Chatbot = () => {
                 }`}
               >
                 <div className="flex items-start space-x-2">
-                  {message.sender === 'bot' && (
-                    <Bot className="w-4 h-4 mt-1 flex-shrink-0" />
-                  )}
+                  {message.sender === 'bot' && <Bot className="w-4 h-4 mt-1 flex-shrink-0" />}
                   <div className="flex-1">
                     <p className="text-sm whitespace-pre-wrap">{message.text}</p>
                     {message.suggestions && (
@@ -273,11 +246,7 @@ const Chatbot = () => {
               disabled={!inputMessage.trim() || isLoading}
               className="btn-primary px-4 py-2 disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              {isLoading ? (
-                <Loader2 className="w-5 h-5 animate-spin" />
-              ) : (
-                <Send className="w-5 h-5" />
-              )}
+              {isLoading ? <Loader2 className="w-5 h-5 animate-spin" /> : <Send className="w-5 h-5" />}
             </button>
           </div>
         </div>
@@ -292,11 +261,6 @@ const Chatbot = () => {
             <p className="text-sm text-red-700 mt-1">
               If you're in immediate danger or having thoughts of self-harm, please reach out for help:
             </p>
-            <div className="mt-2 space-y-1 text-sm text-red-700">
-              <p>• National Suicide Prevention Lifeline: <strong>988</strong></p>
-              <p>• Crisis Text Line: Text <strong>HOME</strong> to 741741</p>
-              <p>• Emergency Services: <strong>911</strong></p>
-            </div>
           </div>
         </div>
       </div>

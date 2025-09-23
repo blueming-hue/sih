@@ -30,6 +30,7 @@ const Availability = () => {
   const [selectedDate, setSelectedDate] = useState(() => new Date().toISOString().split('T')[0]);
   const [slots, setSlots] = useState([]);
   const [newTime, setNewTime] = useState('');
+  const [seeding, setSeeding] = useState(false);
 
   // Heatmap week range
   const [weekStart, setWeekStart] = useState(() => startOfWeekISO());
@@ -58,6 +59,24 @@ const Availability = () => {
     if (!/^\d{2}:\d{2}$/.test(newTime)) { toast.error('Time must be HH:mm'); return; }
     const res = await upsertAvailabilitySlot(counsellorId, selectedDate, newTime);
     if (res.success) { setNewTime(''); toast.success('Slot added'); } else { toast.error(res.error || 'Failed to add'); }
+  };
+
+  const seedDemoSlots = async () => {
+    if (!counsellorId || !selectedDate) return;
+    setSeeding(true);
+    const demo = ['09:00','09:30','10:00','10:30','11:00','14:00'];
+    try {
+      for (const t of demo) {
+        // eslint-disable-next-line no-await-in-loop
+        await upsertAvailabilitySlot(counsellorId, selectedDate, t);
+      }
+      toast.success('Demo slots added');
+    } catch (e) {
+      console.error(e);
+      toast.error('Failed to add demo slots');
+    } finally {
+      setSeeding(false);
+    }
   };
 
   const toggleActive = async (time, active) => {
@@ -120,6 +139,12 @@ const Availability = () => {
               <input type="text" value={newTime} onChange={(e)=>setNewTime(e.target.value)} placeholder="09:30" className="input-field" />
               <button onClick={addSlot} className="btn-primary inline-flex items-center"><Plus className="w-4 h-4 mr-1"/>Add</button>
             </div>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">Quick Actions</label>
+            <button onClick={seedDemoSlots} disabled={seeding} className="btn-secondary">
+              {seeding ? 'Adding...' : 'Add Demo Slots'}
+            </button>
           </div>
         </div>
 

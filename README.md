@@ -88,8 +88,8 @@ A comprehensive mental health support platform designed specifically for college
 
 1. **Clone the repository:**
    ```bash
-   git clone https://github.com/your-username/digital-psychological-intervention-system.git
-   cd digital-psychological-intervention-system
+   git clone https://github.com/blueming-hue/sih.git
+   cd sih
    ```
 
 2. **Set up Firebase:**
@@ -217,6 +217,109 @@ git push heroku main
 ```
 
 For detailed deployment instructions, see [INTEGRATION_GUIDE.md](INTEGRATION_GUIDE.md#deployment).
+
+## 🔄 Recent Updates
+
+- Counsellor Portal
+  - Motivational greeting and animated counters on `Dashboard`.
+  - Sessions charts (inline SVG) on `Dashboard` and `Bookings`.
+  - Quick actions (Confirm, Reschedule, Cancel, Start Session, Email student) on `Bookings`.
+  - Availability manager with real-time slot toggles.
+
+- Unified Resource Hub
+  - Student `Resources` page now shows both global `resources` and counsellor-owned `resources_counsellors` in real time via a unified subscription.
+  - Counsellors can add links or upload files (audio/video) in `Counsellor > Resources`.
+  - File uploads go to Firebase Storage and store `downloadURL` in Firestore.
+  - Search, filters, and rich card previews.
+
+- Forum
+  - Real-time comment counts using subcollection snapshots.
+  - Success toast after posting a comment.
+  - Client-side sort for stability (avoids composite index requirements during development).
+
+## 📚 Resources Data Model
+
+- Global resources collection: `resources`
+  - Fields: `title` (string), `description` (string), `url` (string), `type` (video|audio|article|guide|link), `category` (optional), `createdAt` (Timestamp)
+
+- Counsellor-owned: `resources_counsellors`
+  - Fields: `title`, `description`, `url`, `type`, `ownerId`, `createdAt` (Timestamp)
+  - Readable by everyone; writeable only by the owner.
+
+## 🔐 Firebase Rules (Essentials)
+
+Firestore rules must allow students to read both collections and counsellors to manage their own resources. Example sketch (customize to your project):
+
+```
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global resources are readable by all
+    match /resources/{id} {
+      allow read: if true;
+      allow write: if false; // managed by staff/admin tooling
+    }
+
+    // Counsellor-owned resources: read all, write only by owner
+    match /resources_counsellors/{id} {
+      allow read: if true;
+      allow create, update, delete: if request.auth != null && request.resource.data.ownerId == request.auth.uid;
+    }
+
+    // Forum posts and comments (example)
+    match /forum_posts/{postId} {
+      allow read: if true;
+      allow create: if request.auth != null;
+      allow update: if false; // or restrict to author/moderator
+
+      match /comments/{commentId} {
+        allow read: if true;
+        allow create: if request.auth != null;
+      }
+    }
+  }
+}
+```
+
+Firebase Storage rules for counsellor uploads:
+
+```
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    match /resources_counsellors/{ownerId}/{allPaths=**} {
+      allow read: if true;
+      allow write: if request.auth != null && request.auth.uid == ownerId;
+    }
+  }
+}
+```
+
+After editing rules:
+
+```bash
+firebase deploy --only firestore:rules
+firebase deploy --only storage:rules
+```
+
+## 🧰 Troubleshooting
+
+- Failed to load resources / counsellors
+  - Cause: missing composite indexes when combining `where` and `orderBy`.
+  - Fix now: client-side sorting implemented; no index required for development.
+  - Long-term: click the "Create index" link from the Firestore error in console and wait until it’s enabled.
+
+- Resources not visible to students
+  - Ensure counsellor items are created in `resources_counsellors` with `ownerId` set and rules deployed.
+  - Student page uses a unified subscription; refresh the page and check console for rule errors.
+
+## 🗺️ Navigation (Key Routes)
+
+- `/resources` — Student Resource Hub (unified global + counsellor items)
+- `/counsellor/resources` — Counsellor resource manager (add/edit/delete, upload)
+- `/counsellor/bookings` — Counsellor bookings with charts and quick actions
+- `/counsellor` — Counsellor dashboard (greeting, KPIs, trends)
+- `/forum` — Peer support forum with live comments and likes
 
 ## 🧪 Testing
 

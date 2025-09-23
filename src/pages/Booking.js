@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useForm } from 'react-hook-form';
 import { useAuth } from '../contexts/AuthContext';
 import { 
@@ -26,7 +26,7 @@ const Booking = () => {
   const [selectedType, setSelectedType] = useState('video');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [counsellors, setCounsellors] = useState([]);
-  const [slots, setSlots] = useState([]); // [{time, booked, ...}]
+  const [slots, setSlots] = useState([]); // [{time, booked, active, ...}]
   const { register, handleSubmit, formState: { errors }, setValue } = useForm();
 
   // Subscribe to counsellors
@@ -51,14 +51,38 @@ const Booking = () => {
     return () => unsub && unsub();
   }, []);
 
+  // Resolve the document id to use for availability (counsellor doc id or userId fallback)
+  const availabilityOwnerId = useMemo(() => {
+    const c = counsellors.find(c => c.id === selectedCounsellor);
+    // Prefer a dedicated availabilityId if present, then userId, else the doc id
+    return c?.availabilityId || c?.userId || c?.id || '';
+  }, [counsellors, selectedCounsellor]);
+
   // Subscribe to availability slots whenever counsellor/date changes
   useEffect(() => {
     let unsub;
-    if (selectedCounsellor && selectedDate) {
+    if (availabilityOwnerId && selectedDate) {
+      // Debug logs to verify the path and incoming data
+      try {
+        const parts = selectedDate.split('-');
+        const alt = parts.length === 3
+          ? (parts[0].length === 4
+              ? `${parts[2]}-${parts[1]}-${parts[0]}`
+              : `${parts[2]}-${parts[1]}-${parts[0]}`)
+          : selectedDate;
+        // eslint-disable-next-line no-console
+        console.log('[Booking] Subscribe availability', {
+          availabilityOwnerId,
+          selectedDate,
+          altDateKey: alt,
+        });
+      } catch {}
       unsub = subscribeAvailabilitySlots(
-        selectedCounsellor,
+        availabilityOwnerId,
         selectedDate,
         (items) => {
+          // eslint-disable-next-line no-console
+          console.log('[Booking] availability items', items);
           setSlots(items);
           // If selectedTime got booked elsewhere, clear it
           if (selectedTime && items.some(s => s.time === selectedTime && s.booked)) {
@@ -75,7 +99,7 @@ const Booking = () => {
       setSlots([]);
     }
     return () => unsub && unsub();
-  }, [selectedCounsellor, selectedDate]);
+  }, [availabilityOwnerId, selectedDate]);
 
   const sessionTypes = [
     {
@@ -102,8 +126,11 @@ const Booking = () => {
   ];
 
   const getAvailableSlots = () => {
-    if (!selectedCounsellor || !selectedDate) return [];
-    return slots.filter(s => !s.booked).map(s => s.time);
+    if (!availabilityOwnerId || !selectedDate) return [];
+    return slots
+      .filter(s => (s.active !== false) && !s.booked)
+      .map(s => s.time)
+      .sort((a,b)=>a.localeCompare(b));
   };
 
   const onSubmit = async (data) => {
@@ -115,6 +142,8 @@ const Booking = () => {
     setIsSubmitting(true);
     try {
       const counsellor = counsellors.find(c => c.id === selectedCounsellor);
+      // Normalize date key to YYYY-MM-DD
+      const dateKey = new Date(selectedDate).toISOString().split('T')[0];
       const result = await bookAppointmentWithSlot({
         user: {
           uid: userData.uid,
@@ -123,13 +152,14 @@ const Booking = () => {
         },
         counsellorId: selectedCounsellor,
         counsellorName: counsellor?.name,
-        dateKey: selectedDate, // already YYYY-MM-DD from input
+        dateKey, // normalized YYYY-MM-DD
         time: selectedTime,
         sessionType: selectedType,
         reason: data.reason,
         urgency: data.urgency,
         previousCounseling: data.previousCounseling,
-        notes: data.notes
+        notes: data.notes,
+        slotOwnerId: availabilityOwnerId
       });
       if (result.success) {
         toast.success('Appointment booked successfully! You will receive a confirmation email shortly.');
@@ -259,25 +289,20 @@ const Booking = () => {
                   <label className="block text-sm font-medium text-gray-700 mb-2">
                     Select Time
                   </label>
-                  <div className="grid grid-cols-3 md:grid-cols-6 gap-2">
-                    {getAvailableSlots().map((time) => (
-                      <button
-                        key={time}
-                        type="button"
-                        onClick={() => setSelectedTime(time)}
-                        className={`p-2 text-sm border rounded-lg transition-colors ${
-                          selectedTime === time
-                            ? 'border-primary-500 bg-primary-50 text-primary-700'
-                            : 'border-gray-200 hover:border-gray-300'
-                        }`}
-                      >
-                        {time}
-                      </button>
-                    ))}
-                    {selectedCounsellor && selectedDate && getAvailableSlots().length === 0 && (
-                      <div className="col-span-3 md:col-span-6 text-sm text-gray-500 py-2">No available slots for this date.</div>
-                    )}
-                  </div>
+                  {getAvailableSlots().length > 0 ? (
+                    <select
+                      value={selectedTime}
+                      onChange={(e) => setSelectedTime(e.target.value)}
+                      className="input-field"
+                    >
+                      <option value="">Select a time</option>
+                      {getAvailableSlots().map((time) => (
+                        <option key={time} value={time}>{time}</option>
+                      ))}
+                    </select>
+                  ) : (
+                    <div className="text-sm text-gray-500 py-2">No available slots for this date.</div>
+                  )}
                 </div>
               )}
 
