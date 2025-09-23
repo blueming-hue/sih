@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
-import { subscribeCounsellorAppointments, updateAppointmentStatus, rescheduleAppointment, createChatSession } from '../../firebase/firestore';
+import { subscribeAppointments, subscribeNotifications, updateAppointmentStatus, rescheduleAppointment, createChatSession, completeAppointment, startAppointment } from '../../firebase/firestore';
 import { Calendar, Clock, CheckCircle, XCircle, Edit2, Save, X, ChevronLeft, ChevronRight, Mail, MessageCircle } from 'lucide-react';
 import toast from 'react-hot-toast';
 
@@ -39,10 +39,31 @@ const Bookings = () => {
 
   useEffect(() => {
     if (!user) return;
-    const unsub = subscribeCounsellorAppointments(user.uid, (items) => {
+    const unsub = subscribeAppointments({ counsellorId: user.uid }, (items) => {
       setAppointments(items);
       setLoading(false);
-    }, (err)=>{ console.error(err); toast.error('Failed to load appointments'); setLoading(false); }, false);
+    }, (err)=>{ console.error(err); toast.error('Failed to load appointments'); setLoading(false); }, 500);
+    return () => unsub && unsub();
+  }, [user]);
+
+  // Realtime notifications toasts
+  useEffect(() => {
+    if (!user) return;
+    let seen = new Set();
+    const unsub = subscribeNotifications(user.uid, (items)=>{
+      items.slice(0, 5).forEach(n => {
+        if (seen.has(n.id)) return;
+        seen.add(n.id);
+        const t = String(n.type||'');
+        if (t === 'appointment_status') {
+          toast.success(n.title || 'Appointment update');
+        } else if (t === 'appointment_deleted') {
+          toast('Appointment cancelled and removed', { icon: '🗑️' });
+        } else if (t === 'appointment_completed') {
+          toast('Student prompted for feedback', { icon: '⭐' });
+        }
+      });
+    }, (err)=>console.error(err));
     return () => unsub && unsub();
   }, [user]);
 
@@ -73,6 +94,8 @@ const Bookings = () => {
 
   const startSession = async (apt) => {
     try {
+      // Mark in progress in backend
+      await startAppointment(apt.id, user.uid);
       const res = await createChatSession({
         userId: user.uid,
         participantId: apt.studentId,
@@ -80,7 +103,16 @@ const Bookings = () => {
         context: 'counselling',
       });
       if (res.success) {
-        toast.success('Session created');
+        // Launch based on session type
+        const sType = String(apt.sessionType||'').toLowerCase();
+        if (sType === 'video' || sType === 'video call') {
+          toast.success('Starting video call…');
+          // TODO: integrate your video provider route/page
+        } else if (sType === 'audio' || sType === 'audio call') {
+          toast.success('Starting audio call…');
+        } else {
+          toast('In-person session — check location details', { icon: '📍' });
+        }
       } else {
         toast.error(res.error || 'Failed to start session');
       }
@@ -109,11 +141,11 @@ const Bookings = () => {
   };
 
   const doConfirm = async (id) => {
-    const res = await updateAppointmentStatus(id, 'confirmed');
+    const res = await updateAppointmentStatus(id, 'confirmed', user?.uid);
     if (!res.success) toast.error(res.error || 'Failed to confirm'); else toast.success('Appointment confirmed');
   };
   const doCancel = async (id) => {
-    const res = await updateAppointmentStatus(id, 'cancelled');
+    const res = await updateAppointmentStatus(id, 'cancelled', user?.uid);
     if (!res.success) toast.error(res.error || 'Failed to cancel'); else toast.success('Appointment cancelled');
   };
   const startEdit = (apt) => {
@@ -123,7 +155,7 @@ const Bookings = () => {
   const saveEdit = async () => {
     const { appointmentDate, appointmentTime } = editDraft;
     if (!appointmentDate || !/^\d{2}:\d{2}$/.test(appointmentTime)) { toast.error('Provide date and HH:mm'); return; }
-    const res = await rescheduleAppointment(editing, { appointmentDate, appointmentTime });
+    const res = await rescheduleAppointment(editing, { appointmentDate, appointmentTime }, user?.uid);
     if (!res.success) toast.error(res.error || 'Failed to reschedule'); else toast.success('Rescheduled');
     setEditing(null);
   };
@@ -216,6 +248,19 @@ const Bookings = () => {
                     )}
                     <button onClick={()=>startSession(a)} className="inline-flex items-center text-sm px-3 py-2 border rounded text-primary-700 bg-primary-50 border-primary-200"><MessageCircle className="w-4 h-4 mr-1"/>Start Session</button>
                     {a.status === 'pending' && <button onClick={()=>doConfirm(a.id)} className="btn-primary inline-flex items-center text-sm"><CheckCircle className="w-4 h-4 mr-1"/>Confirm</button>}
+                    {(['approved','confirmed'].includes(String(a.status||'').toLowerCase())) && (
+                      <button
+                        onClick={async ()=>{
+                          const ok = window.confirm('Mark this session as completed? The student will be prompted to leave feedback.');
+                          if (!ok) return;
+                          const r = await completeAppointment(a.id, user?.uid);
+                          if (!r.success) toast.error(r.error||'Failed to mark completed'); else toast.success('Marked completed');
+                        }}
+                        className="inline-flex items-center text-sm px-3 py-2 border rounded text-emerald-700 bg-emerald-50 border-emerald-200"
+                      >
+                        <CheckCircle className="w-4 h-4 mr-1"/>Mark Completed
+                      </button>
+                    )}
                     <button onClick={()=>startEdit(a)} className="btn-secondary inline-flex items-center text-sm"><Edit2 className="w-4 h-4 mr-1"/>Reschedule</button>
                     <button onClick={()=>doCancel(a.id)} className="inline-flex items-center text-sm px-3 py-2 border rounded text-red-700 bg-red-50 border-red-200"><XCircle className="w-4 h-4 mr-1"/>Cancel</button>
                   </div>

@@ -7,6 +7,9 @@ from firebase_admin import credentials, firestore
 import json
 from datetime import datetime
 import logging
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 
 # Import custom modules
 from chatbot.mental_health_chatbot import MentalHealthChatbot
@@ -41,6 +44,40 @@ except Exception as e:
 chatbot = MentalHealthChatbot()
 assessment = PHQ9GAD7Assessment()
 
+# -------- Email helper --------
+def send_email(to_email: str, subject: str, html_body: str, text_body: str = None):
+    """
+    Sends an email via SMTP using env vars:
+    SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, SMTP_FROM
+    If env vars are not set, this function is a no-op.
+    """
+    host = os.getenv('SMTP_HOST')
+    port = int(os.getenv('SMTP_PORT') or '0')
+    user = os.getenv('SMTP_USER')
+    password = os.getenv('SMTP_PASS')
+    from_email = os.getenv('SMTP_FROM', user or '')
+    if not (host and port and from_email and to_email):
+        logger.info('Email not sent: SMTP not configured or missing recipient')
+        return False
+    try:
+        msg = MIMEMultipart('alternative')
+        msg['Subject'] = subject
+        msg['From'] = from_email
+        msg['To'] = to_email
+        if text_body:
+            msg.attach(MIMEText(text_body, 'plain'))
+        msg.attach(MIMEText(html_body, 'html'))
+        with smtplib.SMTP(host, port, timeout=10) as server:
+            server.starttls()
+            if user and password:
+                server.login(user, password)
+            server.sendmail(from_email, [to_email], msg.as_string())
+        logger.info(f"Email sent to {to_email}")
+        return True
+    except Exception as e:
+        logger.error(f"Failed to send email to {to_email}: {e}")
+        return False
+
 # -------- Counsellor API (server-side with service account) --------
 @app.route('/api/counsellor/appointments', methods=['GET'])
 def list_counsellor_appointments():
@@ -71,6 +108,349 @@ def list_counsellor_appointments():
         return jsonify({'appointments': items})
     except Exception as e:
         logger.error(f"list_counsellor_appointments error: {e}")
+        return jsonify({'error': 'Internal server error'}), 500
+
+
+@app.route('/api/counsellor/appointments/<appointment_id>/start', methods=['PATCH'])
+def counsellor_start_appointment(appointment_id):
+    """
+    Body: { counsellorId: '<uid>' }
+    Sets status to 'in_progress' at session start.
+    """
+    try:
+        if not db:
+            return jsonify({'error': 'Database not available'}), 500
+        data = request.get_json() or {}
+        counsellor_id = data.get('counsellorId')
+        if not counsellor_id:
+            return jsonify({'error': 'counsellorId is required'}), 400
+
+        ref = db.collection('appointments').document(appointment_id)
+        snap = ref.get()
+        if not snap.exists:
+            return jsonify({'error': 'Not found'}), 404
+        appt = snap.to_dict()
+        if appt.get('counsellorId') != counsellor_id:
+            return jsonify({'error': 'Not your appointment'}), 403
+
+        ref.update({'status': 'in_progress', 'updatedAt': datetime.now()})
+        return jsonify({'success': True})
+    except Exception as e:
+        logger.error(f"counsellor_start_appointment error: {e}")
+        return jsonify({'error': 'Internal server error'}), 500
+
+
+@app.route('/api/counsellor/appointments/<appointment_id>/complete', methods=['PATCH'])
+def counsellor_complete_appointment(appointment_id):
+    """
+    Body: { counsellorId: '<uid>' }
+    Sets status to 'completed' and notifies the student to leave feedback.
+    """
+    try:
+        if not db:
+            return jsonify({'error': 'Database not available'}), 500
+        data = request.get_json() or {}
+        counsellor_id = data.get('counsellorId')
+        if not counsellor_id:
+            return jsonify({'error': 'counsellorId is required'}), 400
+
+        ref = db.collection('appointments').document(appointment_id)
+        snap = ref.get()
+        if not snap.exists:
+            return jsonify({'error': 'Not found'}), 404
+        appt = snap.to_dict()
+        if appt.get('counsellorId') != counsellor_id:
+            return jsonify({'error': 'Not your appointment'}), 403
+
+        ref.update({'status': 'completed', 'updatedAt': datetime.now()})
+
+        # Notify student to leave feedback
+        student_id = appt.get('studentId') or appt.get('userId')
+        student_email = appt.get('studentEmail') or appt.get('email') or ''
+        student_name = appt.get('studentName') or ''
+        counsellor_name = appt.get('counsellorName') or ''
+        date_str = appt.get('appointmentDate') or ''
+        time_str = appt.get('appointmentTime') or ''
+
+        subject = "We value your feedback for today's session"
+        html_body = f"""
+        <div>
+          <p>Hi {student_name or 'there'},</p>
+          <p>Your session with <strong>{counsellor_name or 'your counsellor'}</strong> on <strong>{date_str}</strong> at <strong>{time_str}</strong> is now marked as <strong>completed</strong>.</p>
+          <p>Please open Mindly and leave quick feedback for your counsellor.</p>
+          <p>— MINDLY</p>
+        </div>
+        """
+        text_body = f"Hi {student_name or 'there'},\nYour session on {date_str} at {time_str} is completed. Please open Mindly and leave feedback.\n— MINDLY"
+        if student_email:
+            send_email(student_email, subject, html_body, text_body)
+
+        if student_id:
+            try:
+                db.collection('notifications').add({
+                    'userId': student_id,
+                    'type': 'appointment_completed',
+                    'title': 'Session completed',
+                    'body': 'Please leave quick feedback for your counsellor.',
+                    'appointmentId': appointment_id,
+                    'createdAt': datetime.now(),
+                    'read': False
+                })
+            except Exception as e:
+                logger.warning(f"notify write failed: {e}")
+
+        return jsonify({'success': True})
+    except Exception as e:
+        logger.error(f"counsellor_complete_appointment error: {e}")
+        return jsonify({'error': 'Internal server error'}), 500
+
+
+@app.route('/api/counsellor/appointments/<appointment_id>', methods=['DELETE'])
+def counsellor_delete_appointment(appointment_id):
+    """
+    Body JSON: { counsellorId: '<uid>' }
+    Hard-cancel: verify ownership, free slot, delete appointment, email + notify student.
+    """
+    try:
+        if not db:
+            return jsonify({'error': 'Database not available'}), 500
+        data = request.get_json() or {}
+        counsellor_id = data.get('counsellorId')
+        if not counsellor_id:
+            return jsonify({'error': 'counsellorId is required'}), 400
+
+        ref = db.collection('appointments').document(appointment_id)
+        snap = ref.get()
+        if not snap.exists:
+            return jsonify({'success': True})
+        appt = snap.to_dict()
+        if appt.get('counsellorId') != counsellor_id:
+            return jsonify({'error': 'Not your appointment'}), 403
+
+        # Free the availability slot if exists
+        date_key = appt.get('appointmentDate')
+        time_str = appt.get('appointmentTime')
+        owner_id = appt.get('counsellorId')
+        if date_key and time_str and owner_id:
+            try:
+                slot_ref = db.document(f"counsellors/{owner_id}/availability/{date_key}/slots/{time_str}")
+                if slot_ref.get().exists:
+                    slot_ref.update({
+                        'booked': False,
+                        'bookedBy': None,
+                        'sessionId': None,
+                        'updatedAt': datetime.now()
+                    })
+            except Exception as e:
+                logger.warning(f"free slot failed: {e}")
+
+        # Compose student email + notify
+        student_id = appt.get('studentId') or appt.get('userId')
+        student_email = appt.get('studentEmail') or appt.get('email') or ''
+        student_name = appt.get('studentName') or ''
+        counsellor_name = appt.get('counsellorName') or ''
+        date_str = date_key or ''
+        time_disp = time_str or ''
+
+        if not student_email and db and student_id:
+            try:
+                uref = db.collection('users').document(student_id)
+                usnap = uref.get()
+                if usnap.exists:
+                    u = usnap.to_dict() or {}
+                    student_email = u.get('email', '')
+                    if not student_name:
+                        student_name = u.get('name') or u.get('displayName') or ''
+            except Exception as e:
+                logger.warning(f"lookup user email failed: {e}")
+
+        subject = f"Your session on {date_str} {time_disp} was cancelled"
+        html_body = f"""
+        <div>
+          <p>Hi {student_name or 'there'},</p>
+          <p>Your counselling session with <strong>{counsellor_name or 'your counsellor'}</strong> on <strong>{date_str}</strong> at <strong>{time_disp}</strong> was <strong>cancelled</strong>.</p>
+          <p>Please rebook another slot in the app if needed.</p>
+          <p>— MINDLY</p>
+        </div>
+        """
+        text_body = f"Hi {student_name or 'there'},\nYour counselling session on {date_str} at {time_disp} was cancelled.\nPlease rebook another slot if needed.\n— MINDLY"
+        if student_email:
+            send_email(student_email, subject, html_body, text_body)
+
+        if student_id:
+            try:
+                db.collection('notifications').add({
+                    'userId': student_id,
+                    'type': 'appointment_deleted',
+                    'title': 'Appointment cancelled',
+                    'body': f'Your session on {date_str} at {time_disp} was cancelled.',
+                    'appointmentId': appointment_id,
+                    'createdAt': datetime.now(),
+                    'read': False
+                })
+            except Exception as e:
+                logger.warning(f"notify write failed: {e}")
+
+        # Delete the appointment
+        ref.delete()
+        return jsonify({'success': True})
+    except Exception as e:
+        logger.error(f"counsellor_delete_appointment error: {e}")
+        return jsonify({'error': 'Internal server error'}), 500
+
+@app.route('/api/counsellor/appointments/<appointment_id>/insights', methods=['GET'])
+def counsellor_appointment_insights(appointment_id):
+    """
+    Query params: counsellorId=<uid>
+    Returns mood trend (last N days, daily average; default 30, min 7, max 30) and latest PHQ-9/GAD-7 for the student tied to the appointment.
+    Ensures the requesting counsellor matches the appointment's counsellorId.
+    """
+    try:
+        if not db:
+            return jsonify({'error': 'Database not available'}), 500
+        counsellor_id = request.args.get('counsellorId', '')
+        if not counsellor_id:
+            return jsonify({'error': 'counsellorId is required'}), 400
+
+        appt_ref = db.collection('appointments').document(appointment_id)
+        appt_snap = appt_ref.get()
+        if not appt_snap.exists:
+            return jsonify({'error': 'Appointment not found'}), 404
+        appt = appt_snap.to_dict() or {}
+        if appt.get('counsellorId') != counsellor_id:
+            return jsonify({'error': 'Forbidden'}), 403
+        student_id = appt.get('studentId')
+        if not student_id:
+            return jsonify({'error': 'Appointment missing studentId'}), 400
+
+        # Build mood trend from mood_scores collection (last N days daily avg)
+        from datetime import timedelta, timezone
+        def to_naive_utc(dt):
+            if dt is None:
+                return None
+            # If tz-aware, convert to UTC then drop tzinfo
+            if getattr(dt, 'tzinfo', None) is not None:
+                return dt.astimezone(timezone.utc).replace(tzinfo=None)
+            return dt
+        now = datetime.utcnow()  # naive UTC
+        try:
+            days_param = int(request.args.get('days', '30'))
+        except Exception:
+            days_param = 30
+        days_param = max(7, min(30, days_param))
+        start = now - timedelta(days=days_param)
+        fallback = (request.args.get('fallback', 'false').lower() in ('1','true','yes'))
+        # Avoid composite index: query by equality only, sort/filter in Python
+        daily = {}
+        counts = {}
+
+        def add_point(dt, score):
+            if dt is None:
+                return
+            if dt < start:
+                return
+            day = dt.date().isoformat()
+            try:
+                val = float(score)
+            except Exception:
+                return
+            daily[day] = daily.get(day, 0.0) + val
+            counts[day] = counts.get(day, 0) + 1
+
+        # Source A (primary): mood_scores (exactly what student UI writes via addMoodScore)
+        points_before_fallback = 0
+        try:
+            mood_scores_stream = db.collection('mood_scores').where('userId', '==', student_id).stream()
+            for doc in mood_scores_stream:
+                d = doc.to_dict() or {}
+                ts = d.get('recordedAt') or d.get('createdAt')
+                dt = to_naive_utc(ts)
+                before = counts.copy()
+                add_point(dt, d.get('score'))
+                # detect if we added
+                if counts != before:
+                    points_before_fallback += 1
+        except Exception as e:
+            logger.warning(f"insights: mood_scores read failed: {e}")
+
+        # Fallback sources only if requested and no primary points in window
+        if fallback and points_before_fallback == 0:
+            # Source B: moods (user_id/userId, score/mood_score, timestamp/createdAt)
+            try:
+                for uid_field in ('user_id', 'userId'):
+                    moods_stream = db.collection('moods').where(uid_field, '==', student_id).stream()
+                    for doc in moods_stream:
+                        d = doc.to_dict() or {}
+                        ts = d.get('timestamp') or d.get('createdAt')
+                        dt = to_naive_utc(ts)
+                        score = d.get('score', d.get('mood_score'))
+                        add_point(dt, score)
+            except Exception as e:
+                logger.warning(f"insights: moods read failed: {e}")
+
+            # Source C: chat_conversations sentiment (user_id, sentiment.score, timestamp)
+            try:
+                chats_stream = db.collection('chat_conversations').where('user_id', '==', student_id).stream()
+                for doc in chats_stream:
+                    d = doc.to_dict() or {}
+                    ts = d.get('timestamp') or d.get('createdAt')
+                    dt = to_naive_utc(ts)
+                    sent = d.get('sentiment') or {}
+                    score = sent.get('score')
+                    # If score is [-1,1] or [0,1], normalize to 0-100 conservatively
+                    try:
+                        fs = float(score)
+                        if -1.0 <= fs <= 1.0:
+                            norm = (fs + 1.0) / 2.0 * 100.0
+                        else:
+                            # assume already 0-100 scale
+                            norm = fs
+                    except Exception:
+                        norm = None
+                    add_point(dt, norm)
+            except Exception as e:
+                logger.warning(f"insights: chat_conversations read failed: {e}")
+        # Fill last N days list
+        days = []
+        for i in range(days_param - 1, -1, -1):
+            day = (now - timedelta(days=i)).date().isoformat()
+            if day in daily and counts.get(day, 0) > 0:
+                avg = round(daily[day] / counts[day], 2)
+            else:
+                avg = None
+            days.append({'date': day, 'avg': avg})
+
+        # Latest assessments (PHQ-9 and GAD-7) from 'assessments' (avoid order_by; filter and pick latest in Python)
+        latest = {'PHQ-9': None, 'GAD-7': None}
+        latest_ts = {'PHQ-9': None, 'GAD-7': None}
+        # Query both possible user id field shapes
+        for field in ('user_id', 'userId'):
+            stream = db.collection('assessments').where(field, '==', student_id).stream()
+            for doc in stream:
+                a = doc.to_dict() or {}
+                t = str(a.get('type') or '').upper()
+                if t not in ('PHQ-9', 'GAD-7'):
+                    continue
+                ts = a.get('timestamp') or a.get('createdAt')
+                dt = to_naive_utc(ts)
+                key = t
+                prev = latest_ts.get(key)
+                if prev is None or (dt and prev and dt > prev) or (dt and prev is None):
+                    latest_ts[key] = dt
+                    latest[key] = {
+                        'score': a.get('score'),
+                        'severity': a.get('severity') or '',
+                    }
+
+        return jsonify({
+            'moodTrend': days,
+            'assessments': {
+                'phq9': latest['PHQ-9'],
+                'gad7': latest['GAD-7']
+            }
+        })
+    except Exception as e:
+        logger.error(f"appointment_insights error: {e}")
         return jsonify({'error': 'Internal server error'}), 500
 
 @app.route('/api/counsellor/availability/slot', methods=['POST'])
@@ -119,7 +499,63 @@ def counsellor_update_status(appointment_id):
         appt = snap.to_dict()
         if appt.get('counsellorId') != counsellor_id:
             return jsonify({'error': 'Not your appointment'}), 403
+        # Update status
         ref.update({'status': status, 'updatedAt': datetime.now()})
+
+        # Prepare student notification/email
+        student_id = appt.get('studentId') or appt.get('userId')
+        student_email = appt.get('studentEmail') or appt.get('email') or ''
+        student_name = appt.get('studentName') or ''
+        counsellor_name = appt.get('counsellorName') or ''
+        date_str = appt.get('appointmentDate') or ''
+        time_str = appt.get('appointmentTime') or ''
+
+        # If email not on appointment, try users collection
+        if not student_email and db and student_id:
+            try:
+                uref = db.collection('users').document(student_id)
+                usnap = uref.get()
+                if usnap.exists:
+                    u = usnap.to_dict() or {}
+                    student_email = u.get('email', '')
+                    if not student_name:
+                        student_name = u.get('name') or u.get('displayName') or ''
+            except Exception as e:
+                logger.warning(f"lookup user email failed: {e}")
+
+        # Compose email content
+        status_nice = 'confirmed' if status in ('approved','confirmed') else ('cancelled' if status in ('cancelled','canceled') else status)
+        subject = f"Your session on {date_str} {time_str} was {status_nice}"
+        html_body = f"""
+        <div>
+          <p>Hi {student_name or 'there'},</p>
+          <p>Your counselling session with <strong>{counsellor_name or 'your counsellor'}</strong> on <strong>{date_str}</strong> at <strong>{time_str}</strong> was <strong>{status_nice}</strong>.</p>
+          <p>Please check your bookings page for details.</p>
+          <p>— MINDLY</p>
+        </div>
+        """
+        text_body = f"Hi {student_name or 'there'},\nYour counselling session on {date_str} at {time_str} was {status_nice}.\nPlease check your bookings page for details.\n— MINDLY"
+
+        # Send email if possible
+        if student_email:
+            send_email(student_email, subject, html_body, text_body)
+
+        # Write notification doc for student
+        try:
+            if db and student_id:
+                db.collection('notifications').add({
+                    'userId': student_id,
+                    'type': 'appointment_status',
+                    'title': f'Appointment {status_nice}',
+                    'body': f'Your session on {date_str} at {time_str} is {status_nice}.',
+                    'appointmentId': appointment_id,
+                    'status': status,
+                    'createdAt': datetime.now(),
+                    'read': False
+                })
+        except Exception as e:
+            logger.error(f"Failed to write notification: {e}")
+
         return jsonify({'success': True})
     except Exception as e:
         logger.error(f"counsellor_update_status error: {e}")

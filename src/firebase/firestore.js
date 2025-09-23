@@ -40,6 +40,46 @@ export const COLLECTIONS = {
   RESOURCES_VIEWED: 'resources_viewed'
 };
 
+export const deleteAppointment = async (appointmentId, counsellorId) => {
+  try {
+    const res = await apiJson(`/api/counsellor/appointments/${appointmentId}`, 'DELETE', { counsellorId });
+    return { success: true };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+};
+
+export const completeAppointment = async (appointmentId, counsellorId) => {
+  try {
+    await apiJson(`/api/counsellor/appointments/${appointmentId}/complete`, 'PATCH', { counsellorId });
+    return { success: true };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+};
+
+export const startAppointment = async (appointmentId, counsellorId) => {
+  try {
+    await apiJson(`/api/counsellor/appointments/${appointmentId}/start`, 'PATCH', { counsellorId });
+    return { success: true };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+};
+
+// -------- Insights: mood trends + assessments for an appointment's student --------
+export const getAppointmentInsights = async (appointmentId, counsellorId, days = null, fallback = false) => {
+  try {
+    const qs = new URLSearchParams({ counsellorId });
+    if (days != null) qs.set('days', String(days));
+    if (fallback != null) qs.set('fallback', String(!!fallback));
+    const res = await apiJson(`/api/counsellor/appointments/${appointmentId}/insights?${qs.toString()}`, 'GET');
+    return { success: true, data: res };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+};
+
 // Students: submit a rating for a counsellor after a completed session
 // Stores a rating document and updates aggregate fields on counsellor doc:
 // ratingCount, ratingSum, rating (average)
@@ -232,7 +272,11 @@ export const subscribeCounsellorAppointments = (counsellorId, onData, onError = 
       });
       if (upcomingOnly) {
         const todayISO = new Date().toISOString().split('T')[0];
-        items = items.filter(a => String(a.appointmentDate||'') >= todayISO);
+        items = items.filter(a => {
+          const s = String(a.status||'').toLowerCase();
+          const notCancelledOrCompleted = !['cancelled','canceled','completed'].includes(s);
+          return notCancelledOrCompleted && String(a.appointmentDate||'') >= todayISO;
+        });
       }
       if (!cancelled) onData(items);
       // success: reduce interval slightly (towards min)
@@ -329,6 +373,21 @@ export const subscribeAppointments = (filters, onData, onError = console.error, 
       const bt = String(b.appointmentTime || '');
       return at.localeCompare(bt);
     });
+    onData(items);
+  }, onError);
+};
+
+export const subscribeNotifications = (userId, onData, onError = console.error, maxItems = 100) => {
+  if (!userId) return () => {};
+  const qRef = query(
+    collection(db, COLLECTIONS.NOTIFICATIONS),
+    where('userId', '==', userId),
+    orderBy('createdAt', 'desc'),
+    limit(maxItems)
+  );
+  return onSnapshot(qRef, (snap) => {
+    const items = [];
+    snap.forEach(d => items.push({ id: d.id, ...d.data() }));
     onData(items);
   }, onError);
 };
@@ -535,6 +594,26 @@ export const subscribeAvailabilitySlots = (counsellorId, dateKey, onData, onErro
 
   fetchOnce();
   return () => { cancelled = true; if (timer) clearTimeout(timer); };
+};
+
+// Realtime availability via Firestore (owner/student read)
+export const subscribeAvailabilitySlotsRealtime = (counsellorId, dateKey, onData, onError = console.error) => {
+  try {
+    if (!counsellorId || !dateKey) return () => {};
+    const slotsColPath = `${COLLECTIONS.COUNSELLORS}/${counsellorId}/availability/${dateKey}/slots`;
+    const qRef = collection(db, slotsColPath);
+    return onSnapshot(qRef, (snap) => {
+      let items = [];
+      snap.forEach(d => items.push({ id: d.id, ...d.data() }));
+      items = items
+        .filter(s => s && (s.active !== false))
+        .sort((a,b)=> String(a.time||'').localeCompare(String(b.time||'')));
+      onData(items);
+    }, onError);
+  } catch (e) {
+    onError(e);
+    return () => {};
+  }
 };
 
 // Transactional booking to avoid double-booking

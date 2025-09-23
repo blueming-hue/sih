@@ -193,5 +193,90 @@ service cloud.firestore {
       allow create: if isSignedIn() && request.auth.uid == request.resource.data.ownerId;
       allow update, delete: if isSignedIn() && request.auth.uid == resource.data.ownerId;
     }
+
+    // ===== CHAT SYSTEM SECURITY RULES =====
+
+    // Anonymous 1:1 Chat - Waiting Queue
+    match /waitingQueue/{userId} {
+      // Allow all authenticated users to read queue entries (needed for matching)
+      allow read: if isSignedIn();
+      // Allow users to create/update their own queue entry, but any authenticated user can delete (for matching cleanup)
+      allow create, update: if isSignedIn() && request.auth.uid == userId;
+      allow delete: if isSignedIn();
+    }
+
+    // Anonymous 1:1 Chat - Matches
+    match /matches/{matchId} {
+      // Only participants in the match can read the match document
+      allow read: if isSignedIn() && request.auth.uid in resource.data.participants;
+      // Any signed-in user can create a match (for system-generated matches)
+      allow create: if isSignedIn();
+      // Only participants can update/end the match
+      allow update: if isSignedIn() && request.auth.uid in resource.data.participants;
+      allow delete: if false; // Matches should not be deleted, only marked inactive
+
+      // Messages within matches
+      match /messages/{messageId} {
+        // Only participants can read messages
+        allow read: if isSignedIn() && request.auth.uid in get(/databases/$(database)/documents/matches/$(matchId)).data.participants;
+        // Only participants can send messages, and senderId must match their uid
+        allow create: if isSignedIn() &&
+          request.auth.uid in get(/databases/$(database)/documents/matches/$(matchId)).data.participants &&
+          request.auth.uid == request.resource.data.senderId;
+        // No updates or deletes allowed for chat messages
+        allow update, delete: if false;
+      }
+    }
+
+    // Group Chatrooms
+    match /chatrooms/{roomId}/messages/{messageId} {
+      // Anyone can read chatroom messages (public groups)
+      allow read: if true;
+      // Only signed-in users can send messages, and senderId must match their uid
+      allow create: if isSignedIn() && request.auth.uid == request.resource.data.senderId;
+      // No updates or deletes allowed for chat messages
+      allow update, delete: if false;
+    }
+
+    // Volunteer Chat System
+    match /volunteerChats/{chatId} {
+      // Only the student or volunteer involved can read the chat
+      allow read: if isSignedIn() && (
+        request.auth.uid == resource.data.studentId ||
+        request.auth.uid == resource.data.volunteerId
+      );
+      // Only students can create volunteer chats
+      allow create: if isSignedIn() && request.auth.uid == request.resource.data.studentId;
+      // Only participants can update the chat (e.g., end it)
+      allow update: if isSignedIn() && (
+        request.auth.uid == resource.data.studentId ||
+        request.auth.uid == resource.data.volunteerId
+      );
+      allow delete: if false; // Don't allow deletion of chat records
+
+      // Messages within volunteer chats
+      match /messages/{messageId} {
+        // Only participants can read messages
+        allow read: if isSignedIn() && (
+          request.auth.uid == get(/databases/$(database)/documents/volunteerChats/$(chatId)).data.studentId ||
+          request.auth.uid == get(/databases/$(database)/documents/volunteerChats/$(chatId)).data.volunteerId
+        );
+        // Only participants can send messages, and senderId must match their uid
+        allow create: if isSignedIn() &&
+          request.auth.uid == request.resource.data.senderId && (
+            request.auth.uid == get(/databases/$(database)/documents/volunteerChats/$(chatId)).data.studentId ||
+            request.auth.uid == get(/databases/$(database)/documents/volunteerChats/$(chatId)).data.volunteerId
+          );
+        // No updates or deletes allowed for chat messages
+        allow update, delete: if false;
+      }
+    }
+
+    // Peer Management
+    match /peers/{peerId} {
+      // Only the owner can read, create, update, delete their peer entries
+      allow read, update, delete: if isSignedIn() && request.auth.uid == resource.data.userId;
+      allow create: if isSignedIn() && request.auth.uid == request.resource.data.userId;
+    }
   }
 }

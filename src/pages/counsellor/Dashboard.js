@@ -1,15 +1,15 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState, useCallback } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import {
-  subscribeCounsellorAppointments,
+  subscribeAppointments,
   subscribeAvailabilitySlots,
   toggleAvailabilityActive,
   upsertCounsellorNote,
   subscribeCounsellorNotes,
   upsertAvailabilitySlot
 } from '../../firebase/firestore';
-import { updateAppointmentStatus, rescheduleAppointment } from '../../firebase/firestore';
-import { Calendar, Clock, Users, Star, Save, Plus, Mail, ArrowRight, Video, MapPin, ChevronDown, ChevronRight, Lock, User as UserIcon } from 'lucide-react';
+import { updateAppointmentStatus, rescheduleAppointment, getAppointmentInsights } from '../../firebase/firestore';
+import { Calendar, Clock, Users, Star, Save, Plus, Mail, ArrowRight, Video, MapPin, ChevronDown, ChevronRight, Lock, User as UserIcon, X } from 'lucide-react';
 import toast from 'react-hot-toast';
 
 const SectionTitle = ({ children }) => (
@@ -44,14 +44,107 @@ const Dashboard = () => {
   const [showAll, setShowAll] = useState(false);
   const [rescheduleOpen, setRescheduleOpen] = useState({}); // { [apptId]: true }
   const [rescheduleValues, setRescheduleValues] = useState({}); // { [apptId]: { date, time } }
+  // Insights per appointment (lazy-loaded)
+  const [insightsOpen, setInsightsOpen] = useState({}); // { [apptId]: true }
+  const [insightsLoading, setInsightsLoading] = useState({}); // { [apptId]: boolean }
+  const [insightsData, setInsightsData] = useState({}); // { [apptId]: { moodTrend, assessments } }
+  const [insightsError, setInsightsError] = useState({}); // { [apptId]: string }
+  const [insightsDays, setInsightsDays] = useState({}); // { [apptId]: number }
+  // Full trend modal
+  const [trendModal, setTrendModal] = useState({ open: false, apptId: null });
 
-  // Subscribe to upcoming appointments
+  // Load insights (component scope for reuse in modal and cards)
+  const loadInsights = useCallback(async (apptId, days = 7) => {
+    setInsightsLoading(prev=>({ ...prev, [apptId]: true }));
+    setInsightsError(prev=>({ ...prev, [apptId]: null }));
+    const res = await getAppointmentInsights(apptId, counsellorId, days);
+    if (res.success) {
+      setInsightsData(prev=>({ ...prev, [apptId]: res.data }));
+      setInsightsDays(prev=>({ ...prev, [apptId]: days }));
+    } else {
+      setInsightsError(prev=>({ ...prev, [apptId]: res.error || 'Failed to load insights' }));
+    }
+    setInsightsLoading(prev=>({ ...prev, [apptId]: false }));
+  }, [counsellorId]);
+
+  // Small inline sparkline chart
+  const Sparkline = ({ series }) => {
+    const data = (series || []).map(p => (typeof p.avg === 'number' ? p.avg : null));
+    const width = 200; const height = 40; const pad = 2;
+    const vals = data.filter(v=>v!=null);
+    if (!vals.length) return <div className="text-xs text-gray-500">No mood data</div>;
+    const min = Math.min(...vals); const max = Math.max(...vals);
+    const norm = v => {
+      if (v==null) return null;
+      const y = max === min ? 0.5 : (v - min) / (max - min);
+      return height - pad - (height - 2*pad) * y;
+    };
+    const step = (width - 2*pad) / Math.max(1, data.length - 1);
+    let d = '';
+    data.forEach((v, i) => {
+      const x = pad + i * step;
+      const y = norm(v);
+      if (y == null) return;
+      d += (d ? ' L ' : 'M ') + x + ' ' + y;
+    });
+    return (
+      <svg viewBox={`0 0 ${width} ${height}`} width={width} height={height} className="block">
+        <path d={d} fill="none" stroke="#3B82F6" strokeWidth="2" />
+      </svg>
+    );
+  };
+
+  // Large trend chart for modal
+  const BigTrend = ({ series }) => {
+    const data = (series || []).map(p => (typeof p.avg === 'number' ? p.avg : null));
+    const W = 640, H = 220, P = 24; // padding for axes
+    const vals = data.filter(v=>v!=null);
+    if (!vals.length) return <div className="text-sm text-gray-500">No mood data for selected range.</div>;
+    const min = Math.min(...vals), max = Math.max(...vals);
+    const normX = (i) => P + i * ((W - 2*P) / Math.max(1, data.length - 1));
+    const normY = (v) => {
+      if (v==null) return null;
+      const y = max === min ? 0.5 : (v - min) / (max - min);
+      return H - P - (H - 2*P) * y;
+    };
+    let d = '';
+    data.forEach((v, i) => {
+      const x = normX(i), y = normY(v);
+      if (y == null) return;
+      d += (d ? ' L ' : 'M ') + x + ' ' + y;
+    });
+    const yTicks = 4;
+    const ticks = Array.from({length: yTicks+1}, (_,k)=> min + (k*(max-min)/yTicks));
+    return (
+      <svg viewBox={`0 0 ${W} ${H}`} width={W} height={H} className="w-full h-auto">
+        <line x1={P} y1={H-P} x2={W-P} y2={H-P} stroke="#e5e7eb" />
+        <line x1={P} y1={P} x2={P} y2={H-P} stroke="#e5e7eb" />
+        {ticks.map((tv, idx)=>{
+          const y = normY(tv);
+          return (
+            <g key={idx}>
+              <line x1={P-4} y1={y} x2={W-P} y2={y} stroke="#f3f4f6" />
+              <text x={4} y={y+4} fontSize="10" fill="#6b7280">{Math.round(tv)}</text>
+            </g>
+          );
+        })}
+        <path d={d} fill="none" stroke="#3B82F6" strokeWidth="2.5" />
+        {data.map((v,i)=>{
+          const y = normY(v); if (y==null) return null;
+          return <circle key={i} cx={normX(i)} cy={y} r={2.5} fill="#3B82F6" />
+        })}
+      </svg>
+    );
+  };
+
+  // Subscribe to counsellor appointments (real-time)
   useEffect(() => {
     if (!counsellorId) return;
-    const unsub = subscribeCounsellorAppointments(
-      counsellorId,
+    const unsub = subscribeAppointments(
+      { counsellorId },
       (items) => { setAppointments(items); setLoadingAppointments(false); setAppointmentsError(null); },
-      (err) => { console.error(err); setAppointmentsError(err?.data?.error || err?.message || 'Failed to load appointments'); toast.error('Failed to load appointments'); setLoadingAppointments(false); }
+      (err) => { console.error(err); setAppointmentsError(err?.data?.error || err?.message || 'Failed to load appointments'); toast.error('Failed to load appointments'); setLoadingAppointments(false); },
+      500
     );
     return () => unsub && unsub();
   }, [counsellorId, reloadKey]);
@@ -72,12 +165,31 @@ const Dashboard = () => {
 
   // (Resources removed per requirements)
 
-  // Overview calculations
-  const upcomingCount = appointments.length;
-  const nextSession = useMemo(() => {
-    if (!appointments.length) return null;
-    return appointments[0]; // earliest by date asc
+  // Derive upcoming and past from full set to avoid discrepancies
+  const upcoming = useMemo(() => {
+    const todayISO = new Date().toISOString().split('T')[0];
+    // Exclude cancelled/completed from upcoming
+    return (appointments || [])
+      .filter(a => {
+        const s = String(a.status||'').toLowerCase();
+        const future = String(a.appointmentDate||'') >= todayISO;
+        return future && !['cancelled','canceled','completed'].includes(s);
+      })
+      .sort((a,b)=> (a.appointmentDate + a.appointmentTime).localeCompare(b.appointmentDate + b.appointmentTime));
   }, [appointments]);
+  const past = useMemo(() => {
+    const todayISO = new Date().toISOString().split('T')[0];
+    return (appointments || [])
+      .filter(a => String(a.appointmentDate||'') < todayISO)
+      .sort((a,b)=> (b.appointmentDate + b.appointmentTime).localeCompare(a.appointmentDate + a.appointmentTime));
+  }, [appointments]);
+
+  // Overview calculations
+  const upcomingCount = upcoming.length;
+  const nextSession = useMemo(() => {
+    if (!upcoming.length) return null;
+    return upcoming[0]; // earliest upcoming by date/time
+  }, [upcoming]);
   const studentsThisWeek = useMemo(() => {
     const weekAgoISO = (() => { const d = new Date(); d.setDate(d.getDate() - 7); return d.toISOString().split('T')[0]; })();
     const ids = new Set();
@@ -103,7 +215,6 @@ const Dashboard = () => {
   }, [appointments]);
 
   const todayISO = useMemo(() => { const t = new Date(); t.setHours(0,0,0,0); return t.toISOString().split('T')[0]; }, []);
-  const todaysAppointments = useMemo(() => appointments.filter(a => a.appointmentDate === todayISO), [appointments, todayISO]);
 
   // (Suggestions removed per requirements)
 
@@ -268,12 +379,12 @@ const Dashboard = () => {
                   Retry
                 </button>
               </div>
-            ) : appointments.length === 0 ? (
+            ) : upcoming.length === 0 ? (
               <div className="text-center py-8 text-gray-500">No upcoming bookings.</div>
             ) : (
               (() => {
                 // Group by date
-                const groups = appointments.reduce((acc, a) => {
+                const groups = upcoming.reduce((acc, a) => {
                   (acc[a.appointmentDate] ||= []).push(a);
                   return acc;
                 }, {});
@@ -297,12 +408,98 @@ const Dashboard = () => {
                   });
                 };
 
+                const BigTrend = ({ series }) => {
+                  const data = (series || []).map(p => (typeof p.avg === 'number' ? p.avg : null));
+                  const W = 640, H = 220, P = 24; // padding for axes
+                  const vals = data.filter(v=>v!=null);
+                  if (!vals.length) return <div className="text-sm text-gray-500">No mood data for selected range.</div>;
+                  const min = Math.min(...vals), max = Math.max(...vals);
+                  const normX = (i) => P + i * ((W - 2*P) / Math.max(1, data.length - 1));
+                  const normY = (v) => {
+                    if (v==null) return null;
+                    const y = max === min ? 0.5 : (v - min) / (max - min);
+                    return H - P - (H - 2*P) * y;
+                  };
+                  let d = '';
+                  data.forEach((v, i) => {
+                    const x = normX(i), y = normY(v);
+                    if (y == null) return;
+                    d += (d ? ' L ' : 'M ') + x + ' ' + y;
+                  });
+                  const yTicks = 4;
+                  const ticks = Array.from({length: yTicks+1}, (_,k)=> min + (k*(max-min)/yTicks));
+                  return (
+                    <svg viewBox={`0 0 ${W} ${H}`} width={W} height={H} className="w-full h-auto">
+                      {/* axes */}
+                      <line x1={P} y1={H-P} x2={W-P} y2={H-P} stroke="#e5e7eb" />
+                      <line x1={P} y1={P} x2={P} y2={H-P} stroke="#e5e7eb" />
+                      {/* y ticks */}
+                      {ticks.map((tv, idx)=>{
+                        const y = normY(tv);
+                        return (
+                          <g key={idx}>
+                            <line x1={P-4} y1={y} x2={W-P} y2={y} stroke="#f3f4f6" />
+                            <text x={4} y={y+4} fontSize="10" fill="#6b7280">{Math.round(tv)}</text>
+                          </g>
+                        );
+                      })}
+                      {/* line */}
+                      <path d={d} fill="none" stroke="#3B82F6" strokeWidth="2.5" />
+                      {/* points */}
+                      {data.map((v,i)=>{
+                        const y = normY(v); if (y==null) return null;
+                        return <circle key={i} cx={normX(i)} cy={y} r={2.5} fill="#3B82F6" />
+                      })}
+                    </svg>
+                  );
+                };
+
                 const statusBadge = (status) => {
                   const s = String(status || 'pending').toLowerCase();
                   let cls = 'bg-yellow-100 text-yellow-800 border-yellow-200';
                   if (s === 'confirmed' || s === 'approved') cls = 'bg-green-100 text-green-800 border-green-200';
                   if (s === 'cancelled' || s === 'canceled') cls = 'bg-red-100 text-red-800 border-red-200';
                   return <span className={`text-xs px-2 py-1 rounded border capitalize ${cls}`}>{s}</span>;
+                };
+
+                const loadInsights = async (apptId, days = 7) => {
+                  setInsightsLoading(prev=>({ ...prev, [apptId]: true }));
+                  setInsightsError(prev=>({ ...prev, [apptId]: null }));
+                  const res = await getAppointmentInsights(apptId, counsellorId, days);
+                  if (res.success) {
+                    setInsightsData(prev=>({ ...prev, [apptId]: res.data }));
+                    setInsightsDays(prev=>({ ...prev, [apptId]: days }));
+                  } else {
+                    setInsightsError(prev=>({ ...prev, [apptId]: res.error || 'Failed to load insights' }));
+                  }
+                  setInsightsLoading(prev=>({ ...prev, [apptId]: false }));
+                };
+
+                const Sparkline = ({ series }) => {
+                  // series: [{date, avg}] up to ~31 points
+                  const data = (series || []).map(p => (typeof p.avg === 'number' ? p.avg : null));
+                  const width = 200; const height = 40; const pad = 2;
+                  const vals = data.filter(v=>v!=null);
+                  if (!vals.length) return <div className="text-xs text-gray-500">No mood data</div>;
+                  const min = Math.min(...vals); const max = Math.max(...vals);
+                  const norm = v => {
+                    if (v==null) return null;
+                    const y = max === min ? 0.5 : (v - min) / (max - min);
+                    return height - pad - (height - 2*pad) * y;
+                  };
+                  const step = (width - 2*pad) / Math.max(1, data.length - 1);
+                  let d = '';
+                  data.forEach((v, i) => {
+                    const x = pad + i * step;
+                    const y = norm(v);
+                    if (y == null) return;
+                    d += (d ? ' L ' : 'M ') + x + ' ' + y;
+                  });
+                  return (
+                    <svg viewBox={`0 0 ${width} ${height}`} width={width} height={height} className="block">
+                      <path d={d} fill="none" stroke="#3B82F6" strokeWidth="2" />
+                    </svg>
+                  );
                 };
 
                 const renderCard = (a) => (
@@ -357,6 +554,71 @@ const Dashboard = () => {
                       >
                         {rescheduleOpen[a.id] ? 'Close Reschedule' : 'Reschedule'}
                       </button>
+                    </div>
+                    {/* Insights toggle */}
+                    <div className="mt-3">
+                      <button
+                        className="text-xs text-primary-700 hover:underline"
+                        onClick={async ()=>{
+                          setInsightsOpen(o=>({ ...o, [a.id]: !o[a.id] }));
+                          const alreadyLoaded = !!insightsData[a.id];
+                          if (!insightsOpen[a.id] && !alreadyLoaded) {
+                            await loadInsights(a.id, 7);
+                          }
+                        }}
+                      >
+                        {insightsOpen[a.id] ? 'Hide' : 'Show'} mood & assessment
+                      </button>
+                      {insightsOpen[a.id] && (
+                        <div className="mt-2 p-3 border rounded-lg bg-gray-50">
+                          {/* Range toggle */}
+                          <div className="mb-2 flex items-center gap-2">
+                            <span className="text-[11px] text-gray-600">Range:</span>
+                            {[7,30].map(d => (
+                              <button
+                                key={d}
+                                className={`text-[11px] px-2 py-0.5 rounded border ${ (insightsDays[a.id]||7)===d ? 'bg-primary-600 text-white border-primary-600' : 'bg-white text-gray-700 border-gray-300'}`}
+                                onClick={()=> loadInsights(a.id, d)}
+                                disabled={insightsLoading[a.id]}
+                              >
+                                {d}d
+                              </button>
+                            ))}
+                          </div>
+                          {insightsLoading[a.id] ? (
+                            <div className="text-xs text-gray-500">Loading insights…</div>
+                          ) : insightsError[a.id] ? (
+                            <div className="text-xs text-red-600">{insightsError[a.id]}</div>
+                          ) : insightsData[a.id] ? (
+                            <div className="space-y-2">
+                              <div>
+                                <div className="text-xs font-medium text-gray-700 mb-1">Mood (last {(insightsDays[a.id]||7)} days)</div>
+                                <div className="flex items-center justify-between">
+                                  <Sparkline series={insightsData[a.id].moodTrend} />
+                                  <button className="text-[11px] text-primary-700 hover:underline ml-2" onClick={()=> setTrendModal({ open: true, apptId: a.id })}>View full trend</button>
+                                </div>
+                                {(!insightsData[a.id].moodTrend || insightsData[a.id].moodTrend.every(p=>p.avg==null)) && (
+                                  <div className="text-[11px] text-gray-500 mt-1">No mood recorded in last {(insightsDays[a.id]||7)} days. Try 30d.</div>
+                                )}
+                              </div>
+                              <div className="grid grid-cols-2 gap-2 text-sm">
+                                <div className="p-2 bg-white border rounded">
+                                  <div className="text-xs text-gray-500">PHQ-9</div>
+                                  <div className="font-medium">{insightsData[a.id].assessments?.phq9?.score ?? '—'}</div>
+                                  <div className="text-xs text-gray-500">{insightsData[a.id].assessments?.phq9?.severity || ''}</div>
+                                </div>
+                                <div className="p-2 bg-white border rounded">
+                                  <div className="text-xs text-gray-500">GAD-7</div>
+                                  <div className="font-medium">{insightsData[a.id].assessments?.gad7?.score ?? '—'}</div>
+                                  <div className="text-xs text-gray-500">{insightsData[a.id].assessments?.gad7?.severity || ''}</div>
+                                </div>
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="text-xs text-gray-500">No insights available.</div>
+                          )}
+                        </div>
+                      )}
                     </div>
                     {rescheduleOpen[a.id] && (
                       <div className="mt-2 grid grid-cols-1 sm:grid-cols-3 gap-2">
@@ -482,6 +744,44 @@ const Dashboard = () => {
           {/* Profile settings removed from dashboard; move to separate Profile page later */}
         </div>
       </div>
+
+      {/* Full Trend Modal */}
+      {trendModal.open && (
+        <div className="fixed inset-0 z-50">
+          <div className="absolute inset-0 bg-black/40" onClick={()=>setTrendModal({ open:false, apptId:null })} />
+          <div className="absolute inset-0 flex items-center justify-center p-4">
+            <div className="bg-white rounded-xl shadow-xl w-full max-w-3xl p-4">
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="text-lg font-semibold text-gray-900">Mood Trend</h3>
+                <button className="p-1 hover:bg-gray-100 rounded" onClick={()=>setTrendModal({ open:false, apptId:null })}><X className="w-5 h-5 text-gray-600"/></button>
+              </div>
+              {trendModal.apptId && (
+                <div>
+                  <div className="mb-3 flex items-center gap-2">
+                    <span className="text-sm text-gray-600">Range:</span>
+                    {[7,30].map(d => (
+                      <button
+                        key={d}
+                        className={`text-xs px-2 py-1 rounded border ${ (insightsDays[trendModal.apptId]||7)===d ? 'bg-primary-600 text-white border-primary-600' : 'bg-white text-gray-700 border-gray-300'}`}
+                        onClick={async ()=>{ await loadInsights(trendModal.apptId, d); }}
+                      >{d}d</button>
+                    ))}
+                  </div>
+                  {insightsLoading[trendModal.apptId] ? (
+                    <div className="text-sm text-gray-500">Loading…</div>
+                  ) : insightsError[trendModal.apptId] ? (
+                    <div className="text-sm text-red-600">{insightsError[trendModal.apptId]}</div>
+                  ) : insightsData[trendModal.apptId] ? (
+                    <BigTrend series={insightsData[trendModal.apptId].moodTrend} />
+                  ) : (
+                    <div className="text-sm text-gray-500">No data.</div>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
