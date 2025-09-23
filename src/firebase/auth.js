@@ -30,24 +30,62 @@ export const registerUser = async (email, password, userData) => {
       displayName: userData.displayName
     });
     
-    // Create user document in Firestore
-    await setDoc(doc(db, 'users', user.uid), {
-      uid: user.uid,
-      email: user.email,
-      displayName: userData.displayName,
-      role: userData.role || USER_ROLES.STUDENT,
-      collegeEmail: userData.collegeEmail,
-      collegeName: userData.collegeName,
-      year: userData.year,
-      phone: userData.phone,
-      createdAt: new Date(),
-      isVerified: false,
-      profile: {
-        age: userData.age,
-        gender: userData.gender,
-        interests: userData.interests || []
-      }
-    });
+    const role = userData.role || USER_ROLES.STUDENT;
+
+    if (role === USER_ROLES.COUNSELLOR) {
+      // Users collection: keep authentication basics only for counsellors
+      const userDoc = {
+        uid: user.uid,
+        email: user.email,
+        displayName: userData.displayName,
+        role,
+        createdAt: new Date(),
+        isVerified: false
+      };
+      await setDoc(doc(db, 'users', user.uid), userDoc);
+
+      // Counsellor profile in dedicated collection
+      const counsellorDoc = {
+        userId: user.uid,
+        name: userData.displayName,
+        email: user.email,
+        phone: userData.phone ?? null,
+        specialization: userData.specialization || '',
+        experience: userData.experience || '',
+        rating: typeof userData.rating === 'number' ? userData.rating : null,
+        bio: userData.bio || '',
+        createdAt: new Date(),
+        active: false // default false until admin approves
+      };
+      await setDoc(doc(db, 'counsellors', user.uid), counsellorDoc);
+    } else {
+      // Student: keep demographics under users/{uid}
+      const userDoc = {
+        uid: user.uid,
+        email: user.email,
+        displayName: userData.displayName,
+        role,
+        createdAt: new Date(),
+        isVerified: false,
+      };
+      await setDoc(doc(db, 'users', user.uid), userDoc);
+
+      // Students collection holds demographics for symmetry
+      const studentDoc = {
+        userId: user.uid,
+        collegeEmail: userData.collegeEmail ?? null,
+        collegeName: userData.collegeName ?? null,
+        year: userData.year ?? null,
+        phone: userData.phone ?? null,
+        profile: {
+          age: userData.age ?? null,
+          gender: userData.gender ?? null,
+          interests: Array.isArray(userData.interests) ? userData.interests : []
+        },
+        createdAt: new Date()
+      };
+      await setDoc(doc(db, 'students', user.uid), studentDoc);
+    }
     
     return { success: true, user };
   } catch (error) {

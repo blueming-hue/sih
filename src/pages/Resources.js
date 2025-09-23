@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { getResources } from '../firebase/firestore';
+import React, { useState, useEffect, useMemo } from 'react';
+import { subscribeUnifiedResources } from '../firebase/firestore';
 import { logResourceViewed } from '../firebase/firestore';
 import { useAuth } from '../contexts/AuthContext';
 import { 
@@ -42,25 +42,15 @@ const Resources = () => {
   ];
 
   useEffect(() => {
-    loadResources();
+    setLoading(true);
+    const category = selectedCategory === 'all' ? null : selectedCategory;
+    const unsub = subscribeUnifiedResources(
+      category,
+      (items) => { setResources(items); setLoading(false); },
+      (err) => { console.error('Failed to load resources', err); toast.error('Failed to load resources'); setLoading(false); }
+    );
+    return () => unsub && unsub();
   }, [selectedCategory]);
-
-  const loadResources = async () => {
-    try {
-      setLoading(true);
-      const result = await getResources(selectedCategory === 'all' ? null : selectedCategory);
-      if (result.success) {
-        setResources(result.data);
-      } else {
-        toast.error('Failed to load resources');
-      }
-    } catch (error) {
-      console.error('Error loading resources:', error);
-      toast.error('Error loading resources');
-    } finally {
-      setLoading(false);
-    }
-  };
 
   const getTypeIcon = (type) => {
     switch (type) {
@@ -88,14 +78,18 @@ const Resources = () => {
     }
   };
 
-  const filteredResources = resources.filter(resource => {
-    const matchesCategory = selectedCategory === 'all' || resource.category === selectedCategory;
-    const matchesType = selectedType === 'all' || resource.type === selectedType;
-    const matchesSearch = resource.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         resource.description.toLowerCase().includes(searchTerm.toLowerCase());
-    
-    return matchesCategory && matchesType && matchesSearch;
-  });
+  const filteredResources = useMemo(() => {
+    return resources.filter(resource => {
+      const type = resource.type || 'link';
+      const title = (resource.title || '').toLowerCase();
+      const desc = (resource.description || '').toLowerCase();
+      const cat = resource.category || null;
+      const matchesCategory = selectedCategory === 'all' || cat === selectedCategory || resource.__src === 'counsellor';
+      const matchesType = selectedType === 'all' || type === selectedType;
+      const matchesSearch = title.includes(searchTerm.toLowerCase()) || desc.includes(searchTerm.toLowerCase());
+      return matchesCategory && matchesType && matchesSearch;
+    });
+  }, [resources, selectedCategory, selectedType, searchTerm]);
 
   const handleResourceClick = async (resource) => {
     try {
@@ -268,7 +262,7 @@ const Resources = () => {
                   {getTypeIcon(resource.type)}
                 </div>
                 <span className="inline-block px-2 py-1 text-xs font-medium bg-gray-100 text-gray-800 rounded-full">
-                  {categories.find(c => c.id === resource.category)?.name || resource.category}
+                  {categories.find(c => c.id === resource.category)?.name || resource.category || 'General'}
                 </span>
               </div>
 

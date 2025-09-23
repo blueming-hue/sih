@@ -12,21 +12,38 @@ const Register = () => {
   const { register, handleSubmit, watch, formState: { errors } } = useForm();
 
   const password = watch('password');
+  const role = watch('role');
 
   const onSubmit = async (data) => {
     setLoading(true);
     try {
-      const result = await registerUser(data.email, data.password, {
+      // Build payload based on role
+      const base = {
         displayName: data.displayName,
         role: data.role,
-        collegeEmail: data.collegeEmail,
-        collegeName: data.collegeName,
-        year: data.year,
         phone: data.phone,
-        age: data.age,
-        gender: data.gender,
-        interests: data.interests ? data.interests.split(',').map(i => i.trim()) : []
-      });
+      };
+      let payload;
+      if (data.role === USER_ROLES.COUNSELLOR) {
+        payload = {
+          ...base,
+          specialization: data.specialization,
+          experience: data.experience || '',
+          bio: data.bio || ''
+        };
+      } else {
+        payload = {
+          ...base,
+          collegeEmail: data.collegeEmail,
+          collegeName: data.collegeName,
+          year: data.year,
+          age: data.age,
+          gender: data.gender,
+          interests: data.interests ? data.interests.split(',').map(i => i.trim()) : []
+        };
+      }
+
+      const result = await registerUser(data.email, data.password, payload);
 
       if (result.success) {
         toast.success('Account created successfully! Please check your email for verification.');
@@ -119,31 +136,33 @@ const Register = () => {
               )}
             </div>
 
-            <div>
-              <label htmlFor="collegeEmail" className="block text-sm font-medium text-gray-700">
-                College Email (for verification)
-              </label>
-              <div className="mt-1 relative">
-                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                  <GraduationCap className="h-5 w-5 text-gray-400" />
+            {role !== USER_ROLES.COUNSELLOR && (
+              <div>
+                <label htmlFor="collegeEmail" className="block text-sm font-medium text-gray-700">
+                  College Email (for verification)
+                </label>
+                <div className="mt-1 relative">
+                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                    <GraduationCap className="h-5 w-5 text-gray-400" />
+                  </div>
+                  <input
+                    {...register('collegeEmail', {
+                      required: role !== USER_ROLES.COUNSELLOR ? 'College email is required' : false,
+                      pattern: {
+                        value: /^[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}$/i,
+                        message: 'Invalid email address'
+                      }
+                    })}
+                    type="email"
+                    className="input-field pl-10"
+                    placeholder="Enter your college email"
+                  />
                 </div>
-                <input
-                  {...register('collegeEmail', {
-                    required: 'College email is required',
-                    pattern: {
-                      value: /^[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}$/i,
-                      message: 'Invalid email address'
-                    }
-                  })}
-                  type="email"
-                  className="input-field pl-10"
-                  placeholder="Enter your college email"
-                />
+                {errors.collegeEmail && (
+                  <p className="mt-1 text-sm text-red-600">{errors.collegeEmail.message}</p>
+                )}
               </div>
-              {errors.collegeEmail && (
-                <p className="mt-1 text-sm text-red-600">{errors.collegeEmail.message}</p>
-              )}
-            </div>
+            )}
 
             <div>
               <label htmlFor="password" className="block text-sm font-medium text-gray-700">
@@ -205,46 +224,50 @@ const Register = () => {
               )}
             </div>
 
-            {/* College Information */}
-            <div>
-              <label htmlFor="collegeName" className="block text-sm font-medium text-gray-700">
-                College/University Name
-              </label>
-              <input
-                {...register('collegeName', {
-                  required: 'College name is required'
-                })}
-                type="text"
-                className="input-field"
-                placeholder="Enter your college/university name"
-              />
-              {errors.collegeName && (
-                <p className="mt-1 text-sm text-red-600">{errors.collegeName.message}</p>
-              )}
-            </div>
+            {/* College Information (students only) */}
+            {role !== USER_ROLES.COUNSELLOR && (
+              <div>
+                <label htmlFor="collegeName" className="block text-sm font-medium text-gray-700">
+                  College/University Name
+                </label>
+                <input
+                  {...register('collegeName', {
+                    required: role !== USER_ROLES.COUNSELLOR ? 'College name is required' : false
+                  })}
+                  type="text"
+                  className="input-field"
+                  placeholder="Enter your college/university name"
+                />
+                {errors.collegeName && (
+                  <p className="mt-1 text-sm text-red-600">{errors.collegeName.message}</p>
+                )}
+              </div>
+            )}
 
-            <div>
-              <label htmlFor="year" className="block text-sm font-medium text-gray-700">
-                Academic Year
-              </label>
-              <select
-                {...register('year', {
-                  required: 'Academic year is required'
-                })}
-                className="input-field"
-              >
-                <option value="">Select your year</option>
-                <option value="1st Year">1st Year</option>
-                <option value="2nd Year">2nd Year</option>
-                <option value="3rd Year">3rd Year</option>
-                <option value="4th Year">4th Year</option>
-                <option value="Graduate">Graduate</option>
-                <option value="Post Graduate">Post Graduate</option>
-              </select>
-              {errors.year && (
-                <p className="mt-1 text-sm text-red-600">{errors.year.message}</p>
-              )}
-            </div>
+            {role !== USER_ROLES.COUNSELLOR && (
+              <div>
+                <label htmlFor="year" className="block text-sm font-medium text-gray-700">
+                  Academic Year
+                </label>
+                <select
+                  {...register('year', {
+                    required: role !== USER_ROLES.COUNSELLOR ? 'Academic year is required' : false
+                  })}
+                  className="input-field"
+                >
+                  <option value="">Select your year</option>
+                  <option value="1st Year">1st Year</option>
+                  <option value="2nd Year">2nd Year</option>
+                  <option value="3rd Year">3rd Year</option>
+                  <option value="4th Year">4th Year</option>
+                  <option value="Graduate">Graduate</option>
+                  <option value="Post Graduate">Post Graduate</option>
+                </select>
+                {errors.year && (
+                  <p className="mt-1 text-sm text-red-600">{errors.year.message}</p>
+                )}
+              </div>
+            )}
 
             <div>
               <label htmlFor="phone" className="block text-sm font-medium text-gray-700">
@@ -272,66 +295,70 @@ const Register = () => {
               )}
             </div>
 
-            {/* Additional Information */}
-            <div className="grid grid-cols-2 gap-4">
+            {/* Student Additional Information */}
+            {role !== USER_ROLES.COUNSELLOR && (
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label htmlFor="age" className="block text-sm font-medium text-gray-700">
+                    Age
+                  </label>
+                  <input
+                    {...register('age', {
+                      required: role !== USER_ROLES.COUNSELLOR ? 'Age is required' : false,
+                      min: {
+                        value: 16,
+                        message: 'Age must be at least 16'
+                      },
+                      max: {
+                        value: 30,
+                        message: 'Age must be less than 30'
+                      }
+                    })}
+                    type="number"
+                    className="input-field"
+                    placeholder="Age"
+                  />
+                  {errors.age && (
+                    <p className="mt-1 text-sm text-red-600">{errors.age.message}</p>
+                  )}
+                </div>
+
+                <div>
+                  <label htmlFor="gender" className="block text-sm font-medium text-gray-700">
+                    Gender
+                  </label>
+                  <select
+                    {...register('gender', {
+                      required: role !== USER_ROLES.COUNSELLOR ? 'Gender is required' : false
+                    })}
+                    className="input-field"
+                  >
+                    <option value="">Select gender</option>
+                    <option value="Male">Male</option>
+                    <option value="Female">Female</option>
+                    <option value="Other">Other</option>
+                    <option value="Prefer not to say">Prefer not to say</option>
+                  </select>
+                  {errors.gender && (
+                    <p className="mt-1 text-sm text-red-600">{errors.gender.message}</p>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {role !== USER_ROLES.COUNSELLOR && (
               <div>
-                <label htmlFor="age" className="block text-sm font-medium text-gray-700">
-                  Age
+                <label htmlFor="interests" className="block text-sm font-medium text-gray-700">
+                  Interests (comma-separated)
                 </label>
                 <input
-                  {...register('age', {
-                    required: 'Age is required',
-                    min: {
-                      value: 16,
-                      message: 'Age must be at least 16'
-                    },
-                    max: {
-                      value: 30,
-                      message: 'Age must be less than 30'
-                    }
-                  })}
-                  type="number"
+                  {...register('interests')}
+                  type="text"
                   className="input-field"
-                  placeholder="Age"
+                  placeholder="e.g., Music, Sports, Reading, Art"
                 />
-                {errors.age && (
-                  <p className="mt-1 text-sm text-red-600">{errors.age.message}</p>
-                )}
               </div>
-
-              <div>
-                <label htmlFor="gender" className="block text-sm font-medium text-gray-700">
-                  Gender
-                </label>
-                <select
-                  {...register('gender', {
-                    required: 'Gender is required'
-                  })}
-                  className="input-field"
-                >
-                  <option value="">Select gender</option>
-                  <option value="Male">Male</option>
-                  <option value="Female">Female</option>
-                  <option value="Other">Other</option>
-                  <option value="Prefer not to say">Prefer not to say</option>
-                </select>
-                {errors.gender && (
-                  <p className="mt-1 text-sm text-red-600">{errors.gender.message}</p>
-                )}
-              </div>
-            </div>
-
-            <div>
-              <label htmlFor="interests" className="block text-sm font-medium text-gray-700">
-                Interests (comma-separated)
-              </label>
-              <input
-                {...register('interests')}
-                type="text"
-                className="input-field"
-                placeholder="e.g., Music, Sports, Reading, Art"
-              />
-            </div>
+            )}
 
             <div>
               <label htmlFor="role" className="block text-sm font-medium text-gray-700">
@@ -385,6 +412,63 @@ const Register = () => {
                 {loading ? 'Creating account...' : 'Create account'}
               </button>
             </div>
+            {/* Counsellor-Specific Fields */}
+            {role === USER_ROLES.COUNSELLOR && (
+              <div className="space-y-4 mt-6">
+                <div>
+                  <label htmlFor="specialization" className="block text-sm font-medium text-gray-700">
+                    Specialization
+                  </label>
+                  <select
+                    {...register('specialization', { required: 'Specialization is required' })}
+                    className="input-field"
+                  >
+                    <option value="">Select specialization</option>
+                    <option value="Anxiety">Anxiety</option>
+                    <option value="Depression">Depression</option>
+                    <option value="Academic Stress">Academic Stress</option>
+                    <option value="Relationships">Relationships</option>
+                    <option value="Sleep Issues">Sleep Issues</option>
+                    <option value="Career Counseling">Career Counseling</option>
+                    <option value="General Support">General Support</option>
+                  </select>
+                  {errors.specialization && (
+                    <p className="mt-1 text-sm text-red-600">{errors.specialization.message}</p>
+                  )}
+                </div>
+
+                <div>
+                  <label htmlFor="experience" className="block text-sm font-medium text-gray-700">
+                    Years of Experience
+                  </label>
+                  <input
+                    {...register('experience', {
+                      valueAsNumber: true,
+                      min: { value: 0, message: 'Experience cannot be negative' }
+                    })}
+                    type="number"
+                    className="input-field"
+                    placeholder="e.g., 6"
+                  />
+                  {errors.experience && (
+                    <p className="mt-1 text-sm text-red-600">{errors.experience.message}</p>
+                  )}
+                </div>
+
+                <div>
+                  <label htmlFor="bio" className="block text-sm font-medium text-gray-700">
+                    Short Bio (optional)
+                  </label>
+                  <textarea
+                    {...register('bio')}
+                    rows={3}
+                    className="input-field"
+                    placeholder="Tell students about your approach, specialties, and languages"
+                  />
+                </div>
+              </div>
+            )}
+
           </form>
         </div>
       </div>

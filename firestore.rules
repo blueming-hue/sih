@@ -20,6 +20,26 @@ service cloud.firestore {
       return request.resource.data.diff(resource.data).changedKeys().hasOnly(allowed);
     }
 
+    // Helper to enforce boolean flip from false->true on a field
+    function flippedFalseToTrue(field) {
+      return resource.data[field] == false && request.resource.data[field] == true;
+    }
+
+    // Helper: admin role check from users collection
+    function isAdmin() {
+      return isSignedIn() && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
+    }
+
+    // Helper: student role check
+    function isStudent() {
+      return isSignedIn() && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'student';
+    }
+
+    // Helper: check if any of the provided fields are being changed in this update
+    function isChangingAny(fields) {
+      return request.resource.data.diff(resource.data).changedKeys().hasAny(fields);
+    }
+
     // USERS collection: doc id should equal the user's uid
     match /users/{userId} {
       allow read: if isSignedIn() && request.auth.uid == userId;
@@ -55,8 +75,14 @@ service cloud.firestore {
     }
 
     match /appointments/{docId} {
-      allow create: if isOwnerOnCreate();
-      allow read, update, delete: if isOwner();
+      // Student creates appointment: require studentId == uid
+      allow create: if isSignedIn() && request.auth.uid == request.resource.data.studentId;
+      // Read allowed for the student or the assigned counsellor
+      allow read: if isSignedIn() && (
+        request.auth.uid == resource.data.studentId || request.auth.uid == resource.data.counsellorId
+      );
+      // Updates/deletes only by student for now (adjust if adding staff workflows)
+      allow update, delete: if isSignedIn() && request.auth.uid == resource.data.studentId;
     }
 
     match /notifications/{docId} {
@@ -72,6 +98,26 @@ service cloud.firestore {
     match /resources_viewed/{docId} {
       allow create: if isOwnerOnCreate();
       allow read, update, delete: if isOwner();
+    }
+
+    // Journal entries (flat collection version used by app): only students can access their own
+    match /journal_entries/{entryId} {
+      allow create: if isStudent() && request.auth.uid == request.resource.data.userId;
+      allow read, update, delete: if isStudent() && request.auth.uid == resource.data.userId;
+    }
+
+    // Optional nested path (future migration): journals/{userId}/entries/{entryId}
+    match /journals/{userId}/entries/{entryId} {
+      allow create: if isStudent() && request.auth.uid == userId;
+      allow read, update, delete: if isStudent() && request.auth.uid == userId;
+    }
+
+    // Students collection: per-user demographics separate from users auth basics
+    match /students/{studentId} {
+      // Create allowed only by the owner (userId == uid on create)
+      allow create: if isSignedIn() && request.auth.uid == request.resource.data.userId;
+      // Read/update/delete allowed only by the owner of the document
+      allow read, update, delete: if isSignedIn() && request.auth.uid == resource.data.userId;
     }
 
     // Forum: public read, signed-in create with ownership, controlled likes updates
@@ -93,6 +139,59 @@ service cloud.firestore {
         // Allow updates/deletes by owner of the comment
         allow update, delete: if isOwner();
       }
+    }
+
+    // Counsellors and availability (public read)
+    match /counsellors/{counsellorId} {
+      // Read profiles publicly
+      allow read: if true;
+      // Allow a counsellor to create/update their own profile document
+      // Expect the profile doc to include userId == uid
+      allow create: if isSignedIn() && request.auth.uid == request.resource.data.userId;
+      // Owner can update their profile but NOT the 'active' field
+      // Admin can update restricted fields like 'active' for approvals
+      allow update: if (
+        isSignedIn() && request.auth.uid == resource.data.userId && !isChangingAny(["active"])
+      ) || (
+        isAdmin() && onlyFieldsChanged(["active"]) // admin may toggle active only
+      );
+      // Block delete by default (replace with admin check if needed)
+      allow delete: if false;
+
+      // Availability: /counsellors/{id}/availability/{YYYY-MM-DD}/slots/{HH:mm}
+      match /availability/{date}/slots/{time} {
+        // Read availability publicly for listing
+        allow read: if true;
+        // Allow the owner counsellor to CREATE their slot docs with limited keys
+        allow create: if isSignedIn() &&
+          get(/databases/$(database)/documents/counsellors/$(counsellorId)).data.userId == request.auth.uid &&
+          request.resource.data.keys().hasOnly(["time", "booked", "active", "updatedAt"]) &&
+          request.resource.data.time == time &&
+          request.resource.data.booked == false;
+        // Allow booking by students: only allow flipping booked from false -> true and set bookedBy to current user,
+        // and optionally sessionId/updatedAt. Prevent all other changes by non-staff.
+        allow update: if (
+          isSignedIn() && flippedFalseToTrue('booked') &&
+          onlyFieldsChanged(["booked", "bookedBy", "sessionId", "updatedAt"]) &&
+          request.resource.data.bookedBy == request.auth.uid
+        ) || (
+          // Allow the owner counsellor to manage slot fields like 'active' and 'updatedAt'
+          isSignedIn() &&
+          get(/databases/$(database)/documents/counsellors/$(counsellorId)).data.userId == request.auth.uid &&
+          onlyFieldsChanged(["active", "updatedAt"]) // counsellor cannot alter booking fields via this path
+        );
+        // Allow delete if owner counsellor and slot is not booked
+        allow delete: if isSignedIn() &&
+          get(/databases/$(database)/documents/counsellors/$(counsellorId)).data.userId == request.auth.uid &&
+          resource.data.booked == false;
+      }
+    }
+
+    // Counsellor-managed resources collection
+    match /resources_counsellors/{resId} {
+      allow read: if true; // students may read; adjust as needed
+      allow create: if isSignedIn() && request.auth.uid == request.resource.data.ownerId;
+      allow update, delete: if isSignedIn() && request.auth.uid == resource.data.ownerId;
     }
   }
 }

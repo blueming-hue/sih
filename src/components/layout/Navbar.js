@@ -13,7 +13,8 @@ import {
   BookOpen, 
   FileText,
   Settings,
-  Shield
+  Shield,
+  Clock
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 
@@ -36,7 +37,8 @@ const Navbar = () => {
 
   const isActive = (path) => location.pathname === path;
 
-  const navigationItems = [
+  // Role-based navigation
+  const studentNav = [
     { name: 'Dashboard', path: '/dashboard', icon: User },
     { name: 'AI Chatbot', path: '/chatbot', icon: MessageCircle },
     { name: 'Book Session', path: '/booking', icon: Calendar },
@@ -44,11 +46,17 @@ const Navbar = () => {
     { name: 'Resources', path: '/resources', icon: BookOpen },
     { name: 'Journal', path: '/journal', icon: FileText },
   ];
-
-  const adminItems = [
-    { name: 'Admin Panel', path: '/admin', icon: Shield },
-    { name: 'Counsellor Panel', path: '/counsellor', icon: Settings },
+  const counsellorNav = [
+    { name: 'Dashboard', path: '/counsellor', icon: Settings },
+    { name: 'Bookings', path: '/counsellor/bookings', icon: Calendar },
+    { name: 'Availability', path: '/counsellor/availability', icon: Clock },
+    { name: 'Resources', path: '/counsellor/resources', icon: BookOpen },
   ];
+  const adminNav = [
+    { name: 'Admin Panel', path: '/admin', icon: Shield },
+    { name: 'Approvals', path: '/admin/counsellors', icon: Users },
+  ];
+  const navigationItems = userData?.role === 'student' ? studentNav : userData?.role === 'counsellor' ? counsellorNav : userData?.role === 'admin' ? adminNav : [];
 
   return (
     <nav className="bg-white shadow-sm border-b border-gray-200">
@@ -85,28 +93,7 @@ const Navbar = () => {
                 );
               })}
               
-              {/* Admin/Counsellor specific items */}
-              {(userData?.role === 'admin' || userData?.role === 'counsellor') && (
-                <>
-                  {adminItems.map((item) => {
-                    const Icon = item.icon;
-                    return (
-                      <Link
-                        key={item.name}
-                        to={item.path}
-                        className={`flex items-center space-x-1 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
-                          isActive(item.path)
-                            ? 'bg-primary-100 text-primary-700'
-                            : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
-                        }`}
-                      >
-                        <Icon className="w-4 h-4" />
-                        <span>{item.name}</span>
-                      </Link>
-                    );
-                  })}
-                </>
-              )}
+              {/* No extra items; navigation is role-based above */}
             </div>
           )}
 
@@ -175,46 +162,136 @@ const Navbar = () => {
         {user && isMenuOpen && (
           <div className="md:hidden border-t border-gray-200 py-4">
             <div className="space-y-1">
-              {navigationItems.map((item) => {
-                const Icon = item.icon;
-                return (
+              {userData?.role === 'student' && (
+                <>
                   <Link
-                    key={item.name}
-                    to={item.path}
+                    to="/dashboard"
                     onClick={() => setIsMenuOpen(false)}
                     className={`flex items-center space-x-2 px-3 py-2 rounded-lg text-sm font-medium ${
-                      isActive(item.path)
+                      isActive('/dashboard')
                         ? 'bg-primary-100 text-primary-700'
                         : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
                     }`}
                   >
-                    <Icon className="w-4 h-4" />
-                    <span>{item.name}</span>
+                    <User className="w-4 h-4" />
+                    <span>Dashboard</span>
                   </Link>
-                );
-              })}
-              
-              {/* Admin/Counsellor specific items */}
-              {(userData?.role === 'admin' || userData?.role === 'counsellor') && (
+                  <Link
+                    to="/chatbot"
+                    onClick={() => setIsMenuOpen(false)}
+                    className={`flex items-center space-x-2 px-3 py-2 rounded-lg text-sm font-medium ${
+                      isActive('/chatbot')
+                        ? 'bg-primary-100 text-primary-700'
+                        : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
+                    }`}
+                  >
+                    <MessageCircle className="w-4 h-4" />
+                    <span>AI Chatbot</span>
+                  </Link>
+                  <Link
+                    to="/booking"
+                    onClick={() => setIsMenuOpen(false)}
+                    className={`flex items-center space-x-2 px-3 py-2 rounded-lg text-sm font-medium ${
+                      isActive('/booking')
+                        ? 'bg-primary-100 text-primary-700'
+                        : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
+                    }`}
+                  >
+                    <Calendar className="w-4 h-4" />
+                    <span>Book Session</span>
+                  </Link>
+                  <Link
+                    to="/forum"
+                    onClick={() => setIsMenuOpen(false)}
+                    className={`flex items-center space-x-2 px-3 py-2 rounded-lg text-sm font-medium ${
+                      isActive('/forum')
+                        ? 'bg-primary-100 text-primary-700'
+                        : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
+                    }`}
+                  >
+                    <Users className="w-4 h-4" />
+                    <span>Peer Forum</span>
+                  </Link>
+                  <Link
+                    to="/resources"
+                    onClick={() => setIsMenuOpen(false)}
+                    className={`flex items-center space-x-2 px-3 py-2 rounded-lg text-sm font-medium ${
+                      isActive('/resources')
+                        ? 'bg-primary-100 text-primary-700'
+                        : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
+                    }`}
+                  >
+                    <BookOpen className="w-4 h-4" />
+                    <span>Resources</span>
+                  </Link>
+                  <Link
+                    to="/journal"
+                    onClick={() => setIsMenuOpen(false)}
+                    className={`flex items-center space-x-2 px-3 py-2 rounded-lg text-sm font-medium ${
+                      isActive('/journal')
+                        ? 'bg-primary-100 text-primary-700'
+                        : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
+                    }`}
+                  >
+                    <FileText className="w-4 h-4" />
+                    <span>Journal</span>
+                  </Link>
+                </>
+              )}
+              {userData?.role === 'counsellor' && (
                 <>
-                  {adminItems.map((item) => {
-                    const Icon = item.icon;
-                    return (
-                      <Link
-                        key={item.name}
-                        to={item.path}
-                        onClick={() => setIsMenuOpen(false)}
-                        className={`flex items-center space-x-2 px-3 py-2 rounded-lg text-sm font-medium ${
-                          isActive(item.path)
-                            ? 'bg-primary-100 text-primary-700'
-                            : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
-                        }`}
-                      >
-                        <Icon className="w-4 h-4" />
-                        <span>{item.name}</span>
-                      </Link>
-                    );
-                  })}
+                  <Link
+                    to="/counsellor"
+                    onClick={() => setIsMenuOpen(false)}
+                    className={`flex items-center space-x-2 px-3 py-2 rounded-lg text-sm font-medium ${
+                      isActive('/counsellor')
+                        ? 'bg-primary-100 text-primary-700'
+                        : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
+                    }`}
+                  >
+                    <Settings className="w-4 h-4" />
+                    <span>Counsellor Panel</span>
+                  </Link>
+                  <Link
+                    to="/resources"
+                    onClick={() => setIsMenuOpen(false)}
+                    className={`flex items-center space-x-2 px-3 py-2 rounded-lg text-sm font-medium ${
+                      isActive('/resources')
+                        ? 'bg-primary-100 text-primary-700'
+                        : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
+                    }`}
+                  >
+                    <BookOpen className="w-4 h-4" />
+                    <span>Resources</span>
+                  </Link>
+                </>
+              )}
+              {userData?.role === 'admin' && (
+                <>
+                  <Link
+                    to="/admin"
+                    onClick={() => setIsMenuOpen(false)}
+                    className={`flex items-center space-x-2 px-3 py-2 rounded-lg text-sm font-medium ${
+                      isActive('/admin')
+                        ? 'bg-primary-100 text-primary-700'
+                        : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
+                    }`}
+                  >
+                    <Shield className="w-4 h-4" />
+                    <span>Admin Panel</span>
+                  </Link>
+                  <Link
+                    to="/admin/counsellors"
+                    onClick={() => setIsMenuOpen(false)}
+                    className={`flex items-center space-x-2 px-3 py-2 rounded-lg text-sm font-medium ${
+                      isActive('/admin/counsellors')
+                        ? 'bg-primary-100 text-primary-700'
+                        : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
+                    }`}
+                  >
+                    <Users className="w-4 h-4" />
+                    <span>Approvals</span>
+                  </Link>
                 </>
               )}
             </div>

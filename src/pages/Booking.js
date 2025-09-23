@@ -1,7 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { useForm } from 'react-hook-form';
 import { useAuth } from '../contexts/AuthContext';
-import { createAppointment } from '../firebase/firestore';
+import { 
+  subscribeCounsellors,
+  subscribeAvailabilitySlots,
+  bookAppointmentWithSlot
+} from '../firebase/firestore';
 import { 
   Calendar, 
   Clock, 
@@ -21,49 +25,57 @@ const Booking = () => {
   const [selectedCounsellor, setSelectedCounsellor] = useState('');
   const [selectedType, setSelectedType] = useState('video');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [counsellors, setCounsellors] = useState([]);
+  const [slots, setSlots] = useState([]); // [{time, booked, ...}]
   const { register, handleSubmit, formState: { errors }, setValue } = useForm();
 
-  // Mock counsellors data
-  const counsellors = [
-    {
-      id: '1',
-      name: 'Dr. Sarah Johnson',
-      specialization: 'Anxiety & Stress Management',
-      experience: '8 years',
-      rating: 4.9,
-      availableSlots: ['09:00', '10:00', '14:00', '15:00']
-    },
-    {
-      id: '2',
-      name: 'Dr. Michael Chen',
-      specialization: 'Depression & Mood Disorders',
-      experience: '12 years',
-      rating: 4.8,
-      availableSlots: ['11:00', '13:00', '16:00', '17:00']
-    },
-    {
-      id: '3',
-      name: 'Dr. Emily Rodriguez',
-      specialization: 'Academic Stress & Career Counseling',
-      experience: '6 years',
-      rating: 4.9,
-      availableSlots: ['09:30', '11:30', '14:30', '16:30']
-    },
-    {
-      id: '4',
-      name: 'Dr. James Wilson',
-      specialization: 'Relationship & Social Issues',
-      experience: '10 years',
-      rating: 4.7,
-      availableSlots: ['10:30', '12:30', '15:30', '17:30']
-    }
-  ];
+  // Subscribe to counsellors
+  useEffect(() => {
+    const unsub = subscribeCounsellors(
+      (list) => {
+        // Show only active counsellors
+        const activeList = list.filter(c => c.active === true);
+        setCounsellors(activeList);
+        // If previously selected counsellor no longer exists, clear selection
+        if (selectedCounsellor && !activeList.some(c => c.id === selectedCounsellor)) {
+          setSelectedCounsellor('');
+          setSelectedTime('');
+        }
+      },
+      (err) => {
+        console.error('Failed to load counsellors', err);
+        toast.error('Failed to load counsellors');
+      },
+      100
+    );
+    return () => unsub && unsub();
+  }, []);
 
-  const timeSlots = [
-    '09:00', '09:30', '10:00', '10:30', '11:00', '11:30',
-    '12:00', '12:30', '13:00', '13:30', '14:00', '14:30',
-    '15:00', '15:30', '16:00', '16:30', '17:00', '17:30'
-  ];
+  // Subscribe to availability slots whenever counsellor/date changes
+  useEffect(() => {
+    let unsub;
+    if (selectedCounsellor && selectedDate) {
+      unsub = subscribeAvailabilitySlots(
+        selectedCounsellor,
+        selectedDate,
+        (items) => {
+          setSlots(items);
+          // If selectedTime got booked elsewhere, clear it
+          if (selectedTime && items.some(s => s.time === selectedTime && s.booked)) {
+            setSelectedTime('');
+            toast.error('Selected slot was just booked. Please choose another.');
+          }
+        },
+        (err) => {
+          console.error('Failed to load availability', err);
+          toast.error('Failed to load availability');
+        }
+      );
+    } else {
+      setSlots([]);
+    }
+    return () => unsub && unsub();
+  }, [selectedCounsellor, selectedDate]);
 
   const sessionTypes = [
     {
@@ -91,8 +103,7 @@ const Booking = () => {
 
   const getAvailableSlots = () => {
     if (!selectedCounsellor || !selectedDate) return [];
-    const counsellor = counsellors.find(c => c.id === selectedCounsellor);
-    return counsellor ? counsellor.availableSlots : [];
+    return slots.filter(s => !s.booked).map(s => s.time);
   };
 
   const onSubmit = async (data) => {
@@ -104,24 +115,22 @@ const Booking = () => {
     setIsSubmitting(true);
     try {
       const counsellor = counsellors.find(c => c.id === selectedCounsellor);
-      const appointmentData = {
-        studentId: userData.uid,
-        studentName: userData.displayName,
-        studentEmail: userData.email,
+      const result = await bookAppointmentWithSlot({
+        user: {
+          uid: userData.uid,
+          displayName: userData.displayName,
+          email: userData.email
+        },
         counsellorId: selectedCounsellor,
-        counsellorName: counsellor.name,
-        appointmentDate: selectedDate,
-        appointmentTime: selectedTime,
+        counsellorName: counsellor?.name,
+        dateKey: selectedDate, // already YYYY-MM-DD from input
+        time: selectedTime,
         sessionType: selectedType,
-        duration: '50 minutes',
-        status: 'pending',
         reason: data.reason,
         urgency: data.urgency,
         previousCounseling: data.previousCounseling,
         notes: data.notes
-      };
-
-      const result = await createAppointment(appointmentData);
+      });
       if (result.success) {
         toast.success('Appointment booked successfully! You will receive a confirmation email shortly.');
         // Reset form
@@ -130,7 +139,7 @@ const Booking = () => {
         setSelectedCounsellor('');
         setSelectedType('video');
       } else {
-        toast.error('Failed to book appointment. Please try again.');
+        toast.error(result.error || 'Failed to book appointment. Please try again.');
       }
     } catch (error) {
       console.error('Error booking appointment:', error);
@@ -189,7 +198,7 @@ const Booking = () => {
                 </div>
               </div>
 
-              {/* Counsellor Selection */}
+              {/* Counsellor Selection (real-time) */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-3">
                   Select a Counsellor
@@ -210,17 +219,22 @@ const Booking = () => {
                         <div>
                           <h3 className="font-medium text-gray-900">{counsellor.name}</h3>
                           <p className="text-sm text-gray-600">{counsellor.specialization}</p>
-                          <p className="text-xs text-gray-500">{counsellor.experience} experience</p>
+                          {counsellor.experience && (
+                            <p className="text-xs text-gray-500">{counsellor.experience} experience</p>
+                          )}
                         </div>
                         <div className="text-right">
                           <div className="flex items-center space-x-1">
-                            <span className="text-sm font-medium text-gray-900">{counsellor.rating}</span>
+                            <span className="text-sm font-medium text-gray-900">{counsellor.rating ?? '-'}</span>
                             <span className="text-yellow-500">★</span>
                           </div>
                         </div>
                       </div>
                     </button>
                   ))}
+                  {counsellors.length === 0 && (
+                    <div className="text-sm text-gray-500">No counsellors available at the moment. Please check back later.</div>
+                  )}
                 </div>
               </div>
 
@@ -239,7 +253,7 @@ const Booking = () => {
                 />
               </div>
 
-              {/* Time Selection */}
+              {/* Time Selection (real-time slots) */}
               {selectedDate && (
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -260,6 +274,9 @@ const Booking = () => {
                         {time}
                       </button>
                     ))}
+                    {selectedCounsellor && selectedDate && getAvailableSlots().length === 0 && (
+                      <div className="col-span-3 md:col-span-6 text-sm text-gray-500 py-2">No available slots for this date.</div>
+                    )}
                   </div>
                 </div>
               )}

@@ -6,7 +6,8 @@ import {
   likeForumPost,
   unlikeForumPost,
   addForumComment,
-  subscribeForumComments
+  subscribeForumComments,
+  subscribeForumCommentCount,
 } from '../firebase/firestore';
 import { 
   MessageCircle, 
@@ -27,6 +28,7 @@ const Forum = () => {
   const [showCreatePost, setShowCreatePost] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState('all');
   const [searchTerm, setSearchTerm] = useState('');
+  const [selectedTag, setSelectedTag] = useState('all');
 
   const categories = [
     { id: 'all', name: 'All Topics' },
@@ -96,6 +98,7 @@ const Forum = () => {
   const [expandedPostId, setExpandedPostId] = useState(null);
   const [commentsMap, setCommentsMap] = useState({});
   const [newComment, setNewComment] = useState('');
+  const [commentCounts, setCommentCounts] = useState({}); // postId -> count
 
   // Subscribe to comments for the expanded post
   useEffect(() => {
@@ -111,6 +114,16 @@ const Forum = () => {
     return () => unsub && unsub();
   }, [expandedPostId]);
 
+  // Subscribe to comment counts for all visible posts
+  useEffect(() => {
+    const unsubs = posts.map(p => subscribeForumCommentCount(
+      p.id,
+      (count) => setCommentCounts(prev => ({ ...prev, [p.id]: count })),
+      (err) => console.error('Comment count error', err)
+    ));
+    return () => unsubs.forEach(u => u && u());
+  }, [posts]);
+
   const handleAddComment = async (postId) => {
     try {
       if (!newComment.trim()) return;
@@ -121,6 +134,7 @@ const Forum = () => {
       });
       setNewComment('');
       setExpandedPostId(postId); // keep open
+      toast.success('Comment posted');
     } catch (e) {
       toast.error('Failed to add comment');
     }
@@ -144,10 +158,24 @@ const Forum = () => {
     }
   };
 
-  const filteredPosts = posts.filter(post =>
-    post.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    post.content.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  // Build dynamic tag list from posts
+  const allTags = Array.from(new Set(
+    posts.flatMap(p => (Array.isArray(p.tags) ? p.tags : [])).map(t => String(t).toLowerCase())
+  ));
+
+  const matchesSearch = (post) => {
+    const q = searchTerm.trim().toLowerCase();
+    if (!q) return true;
+    const inTitle = post.title?.toLowerCase().includes(q);
+    const inContent = post.content?.toLowerCase().includes(q);
+    const tags = Array.isArray(post.tags) ? post.tags.map(t => String(t).toLowerCase()) : [];
+    const inTags = tags.some(t => (`#${t}`).includes(q) || t.includes(q));
+    return inTitle || inContent || inTags;
+  };
+
+  const filteredPosts = posts
+    .filter(matchesSearch)
+    .filter(p => selectedTag === 'all' ? true : (Array.isArray(p.tags) && p.tags.map(t=>String(t).toLowerCase()).includes(selectedTag)));
 
   return (
     <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
@@ -241,12 +269,40 @@ const Forum = () => {
                 type="text"
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
-                placeholder="Search posts..."
+                placeholder="Search posts, #tags..."
                 className="input-field pl-10"
               />
             </div>
           </div>
         </div>
+      </div>
+
+      {/* Tag Filter */}
+      {allTags.length > 0 && (
+        <div className="mt-4">
+          <div className="flex items-center flex-wrap gap-2">
+            <button
+              className={`px-3 py-1 text-sm rounded-full border ${selectedTag==='all' ? 'bg-primary-50 border-primary-300 text-primary-700' : 'border-gray-200 text-gray-700'}`}
+              onClick={() => setSelectedTag('all')}
+            >
+              All tags
+            </button>
+            {allTags.map((t) => (
+              <button
+                key={t}
+                className={`px-3 py-1 text-sm rounded-full border ${selectedTag===t ? 'bg-primary-50 border-primary-300 text-primary-700' : 'border-gray-200 text-gray-700'}`}
+                onClick={() => setSelectedTag(t)}
+              >
+                #{t}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Section divider between filters and posts */}
+      <div className="mt-4 md:mt-6">
+        <div className="h-px bg-gray-100"></div>
       </div>
 
       {/* Posts */}
@@ -287,6 +343,13 @@ const Forum = () => {
                   <p className="text-gray-700 mb-4">
                     {post.content}
                   </p>
+                  {Array.isArray(post.tags) && post.tags.length > 0 && (
+                    <div className="flex items-center flex-wrap gap-2 mt-2">
+                      {post.tags.map((tag, idx) => (
+                        <span key={idx} className="inline-block px-2 py-1 text-xs font-medium bg-gray-100 text-gray-700 rounded-full">#{String(tag).toLowerCase()}</span>
+                      ))}
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -306,7 +369,7 @@ const Forum = () => {
                     aria-label="Show comments"
                   >
                     <MessageSquare className="w-4 h-4" />
-                    <span>{post.comments || 0}</span>
+                    <span>{commentCounts[post.id] ?? post.comments ?? 0}</span>
                   </button>
                 </div>
                 <div className="flex items-center space-x-1 text-sm text-gray-500">
@@ -368,7 +431,8 @@ const CreatePostModal = ({ onClose, onSubmit, categories }) => {
   const [formData, setFormData] = useState({
     title: '',
     content: '',
-    category: 'general'
+    category: 'general',
+    tags: ''
   });
 
   const handleSubmit = (e) => {
@@ -377,7 +441,14 @@ const CreatePostModal = ({ onClose, onSubmit, categories }) => {
       toast.error('Please fill in all fields');
       return;
     }
-    onSubmit(formData);
+    // Parse tags: support comma-separated or space-separated hashtags
+    const raw = formData.tags || '';
+    const parts = raw
+      .split(/[,#\s]+/)
+      .map(t => t.replace(/^#/, '').trim().toLowerCase())
+      .filter(Boolean);
+    const uniqueTags = Array.from(new Set(parts));
+    onSubmit({ ...formData, tags: uniqueTags });
   };
 
   return (
@@ -438,6 +509,20 @@ const CreatePostModal = ({ onClose, onSubmit, categories }) => {
                 className="input-field"
                 required
               />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Tags (mood/topic)
+              </label>
+              <input
+                type="text"
+                value={formData.tags}
+                onChange={(e) => setFormData({ ...formData, tags: e.target.value })}
+                placeholder="#anxious, #happy, #academic, #stress"
+                className="input-field"
+              />
+              <p className="text-xs text-gray-500 mt-1">Use hashtags or commas. Example: #anxious #stress, #sleep</p>
             </div>
 
             <div className="flex justify-end space-x-3 pt-4">

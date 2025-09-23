@@ -1,116 +1,67 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import { 
-  Users, 
-  MessageCircle, 
-  Calendar, 
-  BookOpen, 
-  TrendingUp,
-  AlertTriangle,
-  Heart,
-  Activity,
-  BarChart3,
-  PieChart,
-  Clock,
-  Shield
+  Users, MessageCircle, Calendar, Shield, Search, CheckCircle2, XCircle, AlertTriangle, Trash2
 } from 'lucide-react';
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, PieChart as RechartsPieChart, Pie, Cell } from 'recharts';
+import {
+  getAdminOverviewCounts,
+  subscribeAllCounsellors,
+  updateCounsellorActive,
+  subscribeAppointments,
+  searchStudents,
+  subscribeFlaggedPosts,
+  deleteForumPost
+} from '../../firebase/firestore';
+import { Link } from 'react-router-dom';
+import toast from 'react-hot-toast';
 
 const AdminDashboard = () => {
   const { userData } = useAuth();
   const [loading, setLoading] = useState(true);
-  const [analytics, setAnalytics] = useState({});
-
-  // Mock analytics data - in real app, this would come from your backend
-  const mockAnalytics = {
-    totalUsers: 1250,
-    activeUsers: 890,
-    totalSessions: 3450,
-    averageSessionDuration: 25,
-    crisisInterventions: 12,
-    completedAssessments: 456,
-    bookedAppointments: 234,
-    forumPosts: 189,
-    resourceViews: 1234,
-    sentimentTrends: [
-      { date: '2024-02-01', positive: 65, negative: 20, neutral: 15 },
-      { date: '2024-02-02', positive: 62, negative: 23, neutral: 15 },
-      { date: '2024-02-03', positive: 68, negative: 18, neutral: 14 },
-      { date: '2024-02-04', positive: 70, negative: 16, neutral: 14 },
-      { date: '2024-02-05', positive: 67, negative: 19, neutral: 14 },
-      { date: '2024-02-06', positive: 64, negative: 22, neutral: 14 },
-      { date: '2024-02-07', positive: 69, negative: 17, neutral: 14 }
-    ],
-    topConcerns: [
-      { concern: 'Academic Stress', count: 45, percentage: 35 },
-      { concern: 'Anxiety', count: 38, percentage: 30 },
-      { concern: 'Depression', count: 25, percentage: 20 },
-      { concern: 'Sleep Issues', count: 15, percentage: 12 },
-      { concern: 'Relationship Issues', count: 5, percentage: 3 }
-    ],
-    userEngagement: {
-      dailyActiveUsers: 156,
-      weeklyActiveUsers: 890,
-      monthlyActiveUsers: 1250,
-      averageSessionTime: 25,
-      bounceRate: 15
-    },
-    recentActivity: [
-      { id: 1, type: 'crisis', message: 'Crisis intervention triggered', time: '2 minutes ago', severity: 'high' },
-      { id: 2, type: 'assessment', message: 'New PHQ-9 assessment completed', time: '5 minutes ago', severity: 'medium' },
-      { id: 3, type: 'appointment', message: 'New appointment booked', time: '10 minutes ago', severity: 'low' },
-      { id: 4, type: 'forum', message: 'New forum post created', time: '15 minutes ago', severity: 'low' }
-    ]
-  };
+  const [overview, setOverview] = useState({ totalStudents: 0, totalCounsellors: 0, upcomingAppointments: 0, pendingCounsellors: 0, activeSessionsToday: 0 });
+  const [counsellors, setCounsellors] = useState([]);
+  const [studentQuery, setStudentQuery] = useState('');
+  const [students, setStudents] = useState([]);
+  const [appts, setAppts] = useState([]);
+  const [apptFilter, setApptFilter] = useState({ counsellorId: '', studentId: '' });
+  const [flagged, setFlagged] = useState([]);
 
   useEffect(() => {
-    // Simulate loading analytics data
-    setTimeout(() => {
-      setAnalytics(mockAnalytics);
-      setLoading(false);
-    }, 1000);
+    let mounted = true;
+    (async () => {
+      const res = await getAdminOverviewCounts();
+      if (mounted) {
+        if (res.success) setOverview(res.data); else toast.error('Failed to load overview');
+        setLoading(false);
+      }
+    })();
+    return () => { mounted = false; };
   }, []);
 
-  const stats = [
-    {
-      title: 'Total Users',
-      value: analytics.totalUsers?.toLocaleString() || '0',
-      change: '+12%',
-      changeType: 'positive',
-      icon: Users,
-      color: 'text-blue-600'
-    },
-    {
-      title: 'Active Sessions',
-      value: analytics.totalSessions?.toLocaleString() || '0',
-      change: '+8%',
-      changeType: 'positive',
-      icon: MessageCircle,
-      color: 'text-green-600'
-    },
-    {
-      title: 'Crisis Interventions',
-      value: analytics.crisisInterventions || '0',
-      change: '-2%',
-      changeType: 'negative',
-      icon: AlertTriangle,
-      color: 'text-red-600'
-    },
-    {
-      title: 'Completed Assessments',
-      value: analytics.completedAssessments || '0',
-      change: '+15%',
-      changeType: 'positive',
-      icon: Heart,
-      color: 'text-purple-600'
-    }
-  ];
+  useEffect(() => {
+    const unsub = subscribeAllCounsellors((items)=> setCounsellors(items), (e)=>console.error(e));
+    return () => unsub && unsub();
+  }, []);
 
-  const pieData = [
-    { name: 'Positive', value: 65, color: '#10B981' },
-    { name: 'Neutral', value: 20, color: '#6B7280' },
-    { name: 'Negative', value: 15, color: '#EF4444' }
-  ];
+  useEffect(() => {
+    const unsub = subscribeAppointments(apptFilter, (items)=> setAppts(items), (e)=>console.error(e));
+    return () => unsub && unsub();
+  }, [apptFilter]);
+
+  useEffect(() => {
+    const unsub = subscribeFlaggedPosts((items)=> setFlagged(items), (e)=>console.error(e));
+    return () => unsub && unsub();
+  }, []);
+
+  const runStudentSearch = async () => {
+    const res = await searchStudents(studentQuery);
+    if (res.success) setStudents(res.data); else toast.error('Failed to search students');
+  };
+
+  const toggleActive = async (c) => {
+    const next = !c.active; const res = await updateCounsellorActive(c.id, next);
+    if (!res.success) toast.error('Failed to update status');
+  };
 
   if (loading) {
     return (
@@ -127,9 +78,7 @@ const AdminDashboard = () => {
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-3xl font-bold text-gray-900">Admin Dashboard</h1>
-            <p className="text-gray-600 mt-2">
-              System overview and analytics for the Digital Psychological Intervention System
-            </p>
+            <p className="text-gray-600 mt-2">Overview, approvals, and moderation</p>
           </div>
           <div className="flex items-center space-x-2">
             <Shield className="w-6 h-6 text-primary-600" />
@@ -138,180 +87,109 @@ const AdminDashboard = () => {
         </div>
       </div>
 
-      {/* Stats Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-        {stats.map((stat, index) => {
-          const Icon = stat.icon;
-          return (
-            <div key={index} className="card">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm font-medium text-gray-600">{stat.title}</p>
-                  <p className="text-2xl font-bold text-gray-900">{stat.value}</p>
-                  <p className={`text-sm ${stat.changeType === 'positive' ? 'text-green-600' : 'text-red-600'}`}>
-                    {stat.change} from last week
-                  </p>
-                </div>
-                <div className={`p-3 rounded-full ${stat.color.replace('text-', 'bg-').replace('-600', '-100')}`}>
-                  <Icon className={`w-6 h-6 ${stat.color}`} />
-                </div>
-              </div>
-            </div>
-          );
-        })}
+      {/* Overview Cards */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-6 mb-8">
+        <div className="card"><p className="text-sm text-gray-600">Total Students</p><p className="text-2xl font-bold">{overview.totalStudents}</p></div>
+        <div className="card"><p className="text-sm text-gray-600">Total Counsellors</p><p className="text-2xl font-bold">{overview.totalCounsellors}</p></div>
+        <div className="card"><p className="text-sm text-gray-600">Active Sessions Today</p><p className="text-2xl font-bold">{overview.activeSessionsToday}</p></div>
+        <div className="card"><p className="text-sm text-gray-600">Upcoming Appointments</p><p className="text-2xl font-bold">{overview.upcomingAppointments}</p></div>
+        <div className="card"><p className="text-sm text-gray-600">Pending Approvals</p><p className="text-2xl font-bold">{overview.pendingCounsellors}</p></div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        {/* Main Charts */}
-        <div className="lg:col-span-2 space-y-6">
-          {/* Sentiment Trends */}
-          <div className="card">
-            <h3 className="text-lg font-semibold text-gray-900 mb-4">Sentiment Trends (Last 7 Days)</h3>
-            <ResponsiveContainer width="100%" height={300}>
-              <LineChart data={analytics.sentimentTrends}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="date" />
-                <YAxis />
-                <Tooltip />
-                <Line type="monotone" dataKey="positive" stroke="#10B981" strokeWidth={2} name="Positive" />
-                <Line type="monotone" dataKey="negative" stroke="#EF4444" strokeWidth={2} name="Negative" />
-                <Line type="monotone" dataKey="neutral" stroke="#6B7280" strokeWidth={2} name="Neutral" />
-              </LineChart>
-            </ResponsiveContainer>
+        {/* User Management */}
+        <div className="card lg:col-span-1">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-lg font-semibold text-gray-900">User Management</h3>
+            <Link to="/admin/counsellors" className="text-sm text-primary-600 hover:underline">Manage Counsellors</Link>
           </div>
-
-          {/* Top Concerns */}
-          <div className="card">
-            <h3 className="text-lg font-semibold text-gray-900 mb-4">Top Mental Health Concerns</h3>
-            <ResponsiveContainer width="100%" height={300}>
-              <BarChart data={analytics.topConcerns}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="concern" />
-                <YAxis />
-                <Tooltip />
-                <Bar dataKey="count" fill="#3B82F6" />
-              </BarChart>
-            </ResponsiveContainer>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">Search Students</label>
+            <div className="relative mb-3">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+              <input value={studentQuery} onChange={(e)=>setStudentQuery(e.target.value)} placeholder="name/email/college..." className="input-field pl-10" />
+            </div>
+            <button onClick={runStudentSearch} className="btn-secondary mb-4">Search</button>
+            <div className="max-h-64 overflow-auto space-y-2">
+              {students.map(s => (
+                <div key={s.id} className="p-2 bg-gray-50 rounded">
+                  <p className="text-sm font-medium text-gray-900">{s.collegeEmail || s.userId}</p>
+                  <p className="text-xs text-gray-600">{s.collegeName} • Year {s.year || '—'}</p>
+                </div>
+              ))}
+              {students.length === 0 && (
+                <p className="text-xs text-gray-500">Use the search to view students.</p>
+              )}
+            </div>
           </div>
         </div>
 
-        {/* Sidebar */}
-        <div className="lg:col-span-1 space-y-6">
-          {/* Sentiment Distribution */}
-          <div className="card">
-            <h3 className="text-lg font-semibold text-gray-900 mb-4">Overall Sentiment</h3>
-            <ResponsiveContainer width="100%" height={200}>
-              <RechartsPieChart>
-                <Pie
-                  data={pieData}
-                  cx="50%"
-                  cy="50%"
-                  innerRadius={40}
-                  outerRadius={80}
-                  dataKey="value"
-                >
-                  {pieData.map((entry, index) => (
-                    <Cell key={`cell-${index}`} fill={entry.color} />
-                  ))}
-                </Pie>
-                <Tooltip />
-              </RechartsPieChart>
-            </ResponsiveContainer>
-            <div className="mt-4 space-y-2">
-              {pieData.map((item, index) => (
-                <div key={index} className="flex items-center justify-between">
-                  <div className="flex items-center space-x-2">
-                    <div className="w-3 h-3 rounded-full" style={{ backgroundColor: item.color }}></div>
-                    <span className="text-sm text-gray-600">{item.name}</span>
-                  </div>
-                  <span className="text-sm font-medium text-gray-900">{item.value}%</span>
-                </div>
-              ))}
-            </div>
+        {/* Counsellor Management */}
+        <div className="card lg:col-span-2">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-lg font-semibold text-gray-900">Counsellor Management</h3>
+            <p className="text-sm text-gray-500">Pending: {counsellors.filter(c=>!c.active).length}</p>
           </div>
-
-          {/* User Engagement */}
-          <div className="card">
-            <h3 className="text-lg font-semibold text-gray-900 mb-4">User Engagement</h3>
-            <div className="space-y-4">
-              <div className="flex items-center justify-between">
-                <span className="text-sm text-gray-600">Daily Active Users</span>
-                <span className="text-lg font-bold text-gray-900">{analytics.userEngagement?.dailyActiveUsers}</span>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-sm text-gray-600">Weekly Active Users</span>
-                <span className="text-lg font-bold text-gray-900">{analytics.userEngagement?.weeklyActiveUsers}</span>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-sm text-gray-600">Avg. Session Time</span>
-                <span className="text-lg font-bold text-gray-900">{analytics.userEngagement?.averageSessionTime} min</span>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-sm text-gray-600">Bounce Rate</span>
-                <span className="text-lg font-bold text-gray-900">{analytics.userEngagement?.bounceRate}%</span>
-              </div>
-            </div>
-          </div>
-
-          {/* Recent Activity */}
-          <div className="card">
-            <h3 className="text-lg font-semibold text-gray-900 mb-4">Recent Activity</h3>
-            <div className="space-y-3">
-              {analytics.recentActivity?.map((activity) => (
-                <div key={activity.id} className="flex items-start space-x-3 p-3 bg-gray-50 rounded-lg">
-                  <div className={`p-1 rounded-full ${
-                    activity.severity === 'high' ? 'bg-red-100' :
-                    activity.severity === 'medium' ? 'bg-yellow-100' : 'bg-green-100'
-                  }`}>
-                    {activity.type === 'crisis' && <AlertTriangle className="w-4 h-4 text-red-600" />}
-                    {activity.type === 'assessment' && <Heart className="w-4 h-4 text-purple-600" />}
-                    {activity.type === 'appointment' && <Calendar className="w-4 h-4 text-blue-600" />}
-                    {activity.type === 'forum' && <MessageCircle className="w-4 h-4 text-green-600" />}
-                  </div>
-                  <div className="flex-1">
-                    <p className="text-sm font-medium text-gray-900">{activity.message}</p>
-                    <p className="text-xs text-gray-500">{activity.time}</p>
-                  </div>
+          <div className="space-y-2 max-h-96 overflow-auto pr-1">
+            {counsellors.map((c)=> (
+              <div key={c.id} className="p-3 border rounded flex items-center justify-between">
+                <div>
+                  <p className="font-medium text-gray-900">{c.name} <span className="text-xs text-gray-500">({c.email})</span></p>
+                  <p className="text-sm text-gray-600">{c.specialization || '—'} • {c.experience ? `${c.experience} yrs` : 'exp n/a'} • Rating {c.rating ?? '—'}</p>
+                  <p className="text-xs text-gray-500">Status: {c.active ? 'Active' : 'Pending/Disabled'}</p>
                 </div>
-              ))}
-            </div>
+                <div className="flex items-center gap-2">
+                  <button onClick={()=>toggleActive(c)} className={`inline-flex items-center px-3 py-1 rounded border ${c.active ? 'text-green-700 bg-green-50 border-green-200' : 'text-gray-700 bg-gray-50 border-gray-200'}`}>{c.active ? 'Deactivate' : 'Activate'}</button>
+                  <Link to="/admin/counsellors" className="text-sm text-primary-600">Edit</Link>
+                </div>
+              </div>
+            ))}
           </div>
         </div>
       </div>
 
-      {/* System Health */}
-      <div className="mt-8">
-        <div className="card">
-          <h3 className="text-lg font-semibold text-gray-900 mb-4">System Health</h3>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            <div className="flex items-center space-x-3">
-              <div className="p-2 bg-green-100 rounded-lg">
-                <Activity className="w-5 h-5 text-green-600" />
-              </div>
-              <div>
-                <p className="text-sm font-medium text-gray-900">API Status</p>
-                <p className="text-sm text-green-600">Operational</p>
-              </div>
-            </div>
-            <div className="flex items-center space-x-3">
-              <div className="p-2 bg-green-100 rounded-lg">
-                <BarChart3 className="w-5 h-5 text-green-600" />
-              </div>
-              <div>
-                <p className="text-sm font-medium text-gray-900">Database</p>
-                <p className="text-sm text-green-600">Healthy</p>
-              </div>
-            </div>
-            <div className="flex items-center space-x-3">
-              <div className="p-2 bg-green-100 rounded-lg">
-                <Clock className="w-5 h-5 text-green-600" />
-              </div>
-              <div>
-                <p className="text-sm font-medium text-gray-900">Uptime</p>
-                <p className="text-sm text-green-600">99.9%</p>
-              </div>
-            </div>
+      {/* Appointments Management */}
+      <div className="mt-8 card">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-lg font-semibold text-gray-900">Appointments</h3>
+          <div className="flex items-center gap-2">
+            <input value={apptFilter.counsellorId} onChange={(e)=>setApptFilter(f=>({...f, counsellorId: e.target.value}))} placeholder="Filter by counsellorId" className="input-field" />
+            <input value={apptFilter.studentId} onChange={(e)=>setApptFilter(f=>({...f, studentId: e.target.value}))} placeholder="Filter by studentId" className="input-field" />
           </div>
+        </div>
+        <div className="space-y-2 max-h-96 overflow-auto">
+          {appts.map(a => (
+            <div key={a.id} className="p-3 bg-gray-50 rounded flex items-center justify-between">
+              <div>
+                <p className="text-sm font-medium text-gray-900">{a.appointmentDate} {a.appointmentTime} • {a.sessionType}</p>
+                <p className="text-xs text-gray-600">Student: {a.studentId} • Counsellor: {a.counsellorId}</p>
+              </div>
+              <div className="text-xs text-gray-500">Status: {a.status}</div>
+            </div>
+          ))}
+          {appts.length === 0 && (
+            <p className="text-sm text-gray-500">No appointments found for the given filters.</p>
+          )}
+        </div>
+      </div>
+
+      {/* Forum Moderation */}
+      <div className="mt-8 card">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-lg font-semibold text-gray-900">Forum Moderation</h3>
+          <p className="text-sm text-gray-500">Flagged: {flagged.length}</p>
+        </div>
+        <div className="space-y-2 max-h-96 overflow-auto">
+          {flagged.map(p => (
+            <div key={p.id} className="p-3 border rounded">
+              <p className="font-medium text-gray-900">{p.title}</p>
+              <p className="text-sm text-gray-700 mb-2">{p.content}</p>
+              <div className="flex items-center gap-2">
+                <button onClick={async ()=>{ const r = await deleteForumPost(p.id); if(!r.success) toast.error('Delete failed'); }} className="inline-flex items-center px-3 py-1 rounded border text-red-700 bg-red-50 border-red-200"><Trash2 className="w-4 h-4 mr-1"/>Delete</button>
+              </div>
+            </div>
+          ))}
+          {flagged.length === 0 && <p className="text-sm text-gray-500">No flagged posts.</p>}
         </div>
       </div>
     </div>
