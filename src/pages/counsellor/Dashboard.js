@@ -6,13 +6,10 @@ import {
   toggleAvailabilityActive,
   upsertCounsellorNote,
   subscribeCounsellorNotes,
-  subscribeCounsellorProfile,
-  updateCounsellorProfile,
-  getCounsellorResources,
-  getResources,
   upsertAvailabilitySlot
 } from '../../firebase/firestore';
-import { Calendar, Clock, Users, Star, BookOpen, CheckCircle, AlertCircle, Edit2, Save, X, Plus, Mail, ArrowRight } from 'lucide-react';
+import { updateAppointmentStatus, rescheduleAppointment } from '../../firebase/firestore';
+import { Calendar, Clock, Users, Star, Save, Plus, Mail, ArrowRight, Video, MapPin, ChevronDown, ChevronRight, Lock, User as UserIcon } from 'lucide-react';
 import toast from 'react-hot-toast';
 
 const SectionTitle = ({ children }) => (
@@ -32,31 +29,32 @@ const Dashboard = () => {
   // Overview + bookings
   const [appointments, setAppointments] = useState([]);
   const [loadingAppointments, setLoadingAppointments] = useState(true);
+  const [appointmentsError, setAppointmentsError] = useState(null);
+  const [reloadKey, setReloadKey] = useState(0);
 
   // Availability
   const [selectedDate, setSelectedDate] = useState(() => new Date().toISOString().split('T')[0]);
   const [slots, setSlots] = useState([]);
   const [newTime, setNewTime] = useState('');
 
-  // Profile
-  const [profile, setProfile] = useState(null);
-  const [editProfile, setEditProfile] = useState(false);
-  const [profileDraft, setProfileDraft] = useState({ specialization: '', experience: '', bio: '', phone: '' });
+  // Profile (removed from dashboard to avoid permissions; move to dedicated page later)
 
-  // Resources
-  const [resources, setResources] = useState([]);
-  const [suggested, setSuggested] = useState([]);
+  // Collapsible state for bookings
+  const [collapsedDates, setCollapsedDates] = useState(new Set());
+  const [showAll, setShowAll] = useState(false);
+  const [rescheduleOpen, setRescheduleOpen] = useState({}); // { [apptId]: true }
+  const [rescheduleValues, setRescheduleValues] = useState({}); // { [apptId]: { date, time } }
 
   // Subscribe to upcoming appointments
   useEffect(() => {
     if (!counsellorId) return;
     const unsub = subscribeCounsellorAppointments(
       counsellorId,
-      (items) => { setAppointments(items); setLoadingAppointments(false); },
-      (err) => { console.error(err); toast.error('Failed to load appointments'); setLoadingAppointments(false); }
+      (items) => { setAppointments(items); setLoadingAppointments(false); setAppointmentsError(null); },
+      (err) => { console.error(err); setAppointmentsError(err?.data?.error || err?.message || 'Failed to load appointments'); toast.error('Failed to load appointments'); setLoadingAppointments(false); }
     );
     return () => unsub && unsub();
-  }, [counsellorId]);
+  }, [counsellorId, reloadKey]);
 
   // Subscribe to availability for selected date
   useEffect(() => {
@@ -70,34 +68,9 @@ const Dashboard = () => {
     return () => unsub && unsub();
   }, [counsellorId, selectedDate]);
 
-  // Load profile
-  useEffect(() => {
-    if (!counsellorId) return;
-    const unsub = subscribeCounsellorProfile(
-      counsellorId,
-      (doc) => {
-        setProfile(doc);
-        if (doc) {
-          setProfileDraft({
-            specialization: doc.specialization || '',
-            experience: doc.experience || '',
-            bio: doc.bio || '',
-            phone: doc.phone || ''
-          });
-        }
-      },
-      (err) => console.error(err)
-    );
-    return () => unsub && unsub();
-  }, [counsellorId]);
+  // Load profile removed
 
-  // Load resources once
-  useEffect(() => {
-    (async () => {
-      const res = await getCounsellorResources();
-      if (res.success) setResources(res.data);
-    })();
-  }, []);
+  // (Resources removed per requirements)
 
   // Overview calculations
   const upcomingCount = appointments.length;
@@ -132,40 +105,7 @@ const Dashboard = () => {
   const todayISO = useMemo(() => { const t = new Date(); t.setHours(0,0,0,0); return t.toISOString().split('T')[0]; }, []);
   const todaysAppointments = useMemo(() => appointments.filter(a => a.appointmentDate === todayISO), [appointments, todayISO]);
 
-  // Smart resource suggestions based on today's appointment reasons
-  useEffect(() => {
-    const load = async () => {
-      try {
-        const reasons = Array.from(new Set(todaysAppointments.map(a => a.reason).filter(Boolean)));
-        if (reasons.length === 0) { setSuggested([]); return; }
-        // Map reasons -> categories in RESOURCES
-        const mapReasonToCategory = (r) => {
-          switch (r) {
-            case 'anxiety': return 'Anxiety & Stress';
-            case 'depression': return 'Depression & Mood';
-            case 'academic': return 'Academic Stress';
-            case 'relationships': return 'Relationship Issues';
-            case 'career': return 'Career Guidance';
-            default: return null;
-          }
-        };
-        const cats = Array.from(new Set(reasons.map(mapReasonToCategory).filter(Boolean)));
-        const results = await Promise.all(cats.map(c => getResources(c)));
-        const merged = new Map();
-        results.forEach(res => {
-          if (res?.success) {
-            res.data.forEach(item => {
-              if (!merged.has(item.id)) merged.set(item.id, item);
-            });
-          }
-        });
-        setSuggested(Array.from(merged.values()).slice(0, 6));
-      } catch (e) {
-        console.error(e);
-      }
-    };
-    load();
-  }, [todaysAppointments]);
+  // (Suggestions removed per requirements)
 
   // Notes subscription per appointment (inline mini-editor)
   const [noteTexts, setNoteTexts] = useState({});
@@ -197,10 +137,7 @@ const Dashboard = () => {
     if (res.success) { setNewTime(''); toast.success('Slot added'); } else { toast.error(res.error || 'Failed to add slot'); }
   };
 
-  const saveProfile = async () => {
-    const res = await updateCounsellorProfile(counsellorId, profileDraft);
-    if (res.success) { toast.success('Profile updated'); setEditProfile(false); } else { toast.error(res.error || 'Failed to update profile'); }
-  };
+  // saveProfile removed
 
   // Greeting and animated counters
   const greeting = useMemo(() => {
@@ -232,7 +169,7 @@ const Dashboard = () => {
       {/* Header with greeting */}
       <div className="mb-4">
         <h1 className="text-2xl font-bold text-gray-900">{greeting}, {userData?.displayName || 'Counsellor'} 👋</h1>
-        <p className="text-gray-600">Here’s an overview of your sessions and resources.</p>
+        <p className="text-gray-600">Here’s an overview of your sessions and availability.</p>
       </div>
 
       {/* Quick Actions */}
@@ -255,15 +192,7 @@ const Dashboard = () => {
             <Clock className="w-5 h-5 text-primary-600" />
           </div>
         </a>
-        <a href="#resources" className="card hover:bg-primary-50 transition-colors">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm text-gray-600">Browse</p>
-              <p className="text-lg font-semibold text-gray-900">Resources</p>
-            </div>
-            <BookOpen className="w-5 h-5 text-primary-600" />
-          </div>
-        </a>
+        {/* Resources quick-link removed */}
       </div>
       {/* Overview */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
@@ -332,17 +261,66 @@ const Dashboard = () => {
             <SectionTitle>My Bookings</SectionTitle>
             {loadingAppointments ? (
               <div className="text-center py-8 text-gray-500">Loading appointments…</div>
+            ) : appointmentsError ? (
+              <div className="text-center py-8">
+                <p className="text-sm text-red-600 mb-2">{appointmentsError}</p>
+                <button className="btn-secondary" onClick={()=>{ setLoadingAppointments(true); setAppointmentsError(null); setReloadKey(k=>k+1); }}>
+                  Retry
+                </button>
+              </div>
             ) : appointments.length === 0 ? (
               <div className="text-center py-8 text-gray-500">No upcoming bookings.</div>
             ) : (
-              <div className="space-y-3">
-                {appointments.map(a => (
-                  <div key={a.id} className={`p-4 border rounded-lg ${isTodayISO(a.appointmentDate) ? 'border-primary-300 bg-primary-50' : 'border-gray-200'}`}>
+              (() => {
+                // Group by date
+                const groups = appointments.reduce((acc, a) => {
+                  (acc[a.appointmentDate] ||= []).push(a);
+                  return acc;
+                }, {});
+                const orderedDates = Object.keys(groups).sort();
+                // If not showing all, limit to next 5 across dates
+                let remaining = 5;
+                const limited = !showAll ? orderedDates.reduce((acc, d) => {
+                  if (remaining <= 0) return acc;
+                  const slice = groups[d].slice(0, Math.max(0, remaining));
+                  if (slice.length) {
+                    acc[d] = slice; remaining -= slice.length;
+                  }
+                  return acc;
+                }, {}) : groups;
+
+                const toggleDate = (d) => {
+                  setCollapsedDates(prev => {
+                    const next = new Set(prev);
+                    if (next.has(d)) next.delete(d); else next.add(d);
+                    return next;
+                  });
+                };
+
+                const statusBadge = (status) => {
+                  const s = String(status || 'pending').toLowerCase();
+                  let cls = 'bg-yellow-100 text-yellow-800 border-yellow-200';
+                  if (s === 'confirmed' || s === 'approved') cls = 'bg-green-100 text-green-800 border-green-200';
+                  if (s === 'cancelled' || s === 'canceled') cls = 'bg-red-100 text-red-800 border-red-200';
+                  return <span className={`text-xs px-2 py-1 rounded border capitalize ${cls}`}>{s}</span>;
+                };
+
+                const renderCard = (a) => (
+                  <div key={a.id} className={`p-4 rounded-xl shadow-sm border ${isTodayISO(a.appointmentDate) ? 'bg-primary-50/50 border-primary-200' : 'bg-white border-gray-200'}`}>
                     <div className="flex items-start justify-between">
-                      <div>
-                        <p className="font-medium text-gray-900">{a.studentName || a.studentId}</p>
-                        <p className="text-sm text-gray-600">{formatDate(a.appointmentDate)} • {a.appointmentTime} • <span className="text-gray-500">{a.sessionType}</span></p>
-                        <p className="text-xs text-gray-500">Session ID: {a.id}</p>
+                      <div className="space-y-1">
+                        <div className="flex items-center gap-2 text-sm text-gray-900 font-medium">
+                          <UserIcon className="w-4 h-4 text-gray-500" />
+                          <span>{a.studentName || a.studentId}</span>
+                        </div>
+                        <div className="flex items-center gap-2 text-sm text-gray-700">
+                          <Calendar className="w-4 h-4 text-gray-500" />
+                          <span>{formatDate(a.appointmentDate)} • {a.appointmentTime}</span>
+                        </div>
+                        <div className="flex items-center gap-2 text-sm text-gray-700">
+                          {a.sessionType === 'in-person' ? <MapPin className="w-4 h-4 text-gray-500" /> : <Video className="w-4 h-4 text-gray-500" />}
+                          <span className="capitalize">{a.sessionType || 'session'}</span>
+                        </div>
                       </div>
                       <div className="flex items-center gap-3">
                         {a.studentEmail && (
@@ -350,13 +328,77 @@ const Dashboard = () => {
                             <Mail className="w-3 h-3 mr-1"/> Email
                           </a>
                         )}
-                        <div className="text-xs text-gray-500 capitalize">{a.status}</div>
+                        {statusBadge(a.status)}
                       </div>
                     </div>
-
+                    {/* Actions: Confirm / Cancel / Reschedule */}
+                    <div className="mt-3 flex flex-wrap items-center gap-2">
+                      <button
+                        className="px-2 py-1 text-xs rounded border border-green-300 text-green-700 hover:bg-green-50"
+                        onClick={async ()=>{
+                          const r = await updateAppointmentStatus(a.id, 'approved', counsellorId);
+                          if (!r.success) toast.error(r.error||'Failed to confirm'); else toast.success('Appointment confirmed');
+                        }}
+                      >
+                        Confirm
+                      </button>
+                      <button
+                        className="px-2 py-1 text-xs rounded border border-red-300 text-red-700 hover:bg-red-50"
+                        onClick={async ()=>{
+                          const r = await updateAppointmentStatus(a.id, 'cancelled', counsellorId);
+                          if (!r.success) toast.error(r.error||'Failed to cancel'); else toast.success('Appointment cancelled');
+                        }}
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        className="px-2 py-1 text-xs rounded border border-gray-300 text-gray-700 hover:bg-gray-50"
+                        onClick={()=> setRescheduleOpen(o=>({ ...o, [a.id]: !o[a.id] }))}
+                      >
+                        {rescheduleOpen[a.id] ? 'Close Reschedule' : 'Reschedule'}
+                      </button>
+                    </div>
+                    {rescheduleOpen[a.id] && (
+                      <div className="mt-2 grid grid-cols-1 sm:grid-cols-3 gap-2">
+                        <div>
+                          <label className="block text-xs text-gray-600 mb-1">New Date</label>
+                          <input
+                            type="date"
+                            className="input-field"
+                            value={rescheduleValues[a.id]?.date || ''}
+                            onChange={(e)=> setRescheduleValues(v=>({ ...v, [a.id]: { ...(v[a.id]||{}), date: e.target.value } }))}
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-xs text-gray-600 mb-1">New Time (HH:mm)</label>
+                          <input
+                            type="text"
+                            placeholder="09:30"
+                            className="input-field"
+                            value={rescheduleValues[a.id]?.time || ''}
+                            onChange={(e)=> setRescheduleValues(v=>({ ...v, [a.id]: { ...(v[a.id]||{}), time: e.target.value } }))}
+                          />
+                        </div>
+                        <div className="flex items-end">
+                          <button
+                            className="btn-primary text-xs w-full"
+                            onClick={async ()=>{
+                              const val = rescheduleValues[a.id]||{};
+                              if (!val.date || !val.time) { toast.error('Select date and time'); return; }
+                              const r = await rescheduleAppointment(a.id, { appointmentDate: val.date, appointmentTime: val.time }, counsellorId);
+                              if (!r.success) toast.error(r.error||'Failed to reschedule'); else { toast.success('Rescheduled'); setRescheduleOpen(o=>({ ...o, [a.id]: false })); }
+                            }}
+                          >
+                            Save
+                          </button>
+                        </div>
+                      </div>
+                    )}
                     {/* Private Notes */}
                     <div className="mt-3">
-                      <label className="block text-xs font-medium text-gray-700 mb-1">Private Notes</label>
+                      <label className="block text-xs font-medium text-gray-700 mb-1 inline-flex items-center gap-1">
+                        <Lock className="w-3 h-3 text-gray-500"/> Private Notes
+                      </label>
                       <textarea
                         rows={3}
                         value={noteTexts[a.id] ?? ''}
@@ -369,43 +411,38 @@ const Dashboard = () => {
                       </div>
                     </div>
                   </div>
-                ))}
-              </div>
+                );
+
+                return (
+                  <div className="space-y-4">
+                    {Object.keys(limited).map(d => (
+                      <div key={d} className="border rounded-lg">
+                        <button type="button" onClick={()=>toggleDate(d)} className="w-full flex items-center justify-between px-3 py-2 bg-gray-50 rounded-t-lg">
+                          <div className="font-medium text-gray-900">📅 {new Date(d).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })}</div>
+                          {collapsedDates.has(d) ? <ChevronRight className="w-4 h-4 text-gray-500"/> : <ChevronDown className="w-4 h-4 text-gray-500"/>}
+                        </button>
+                        {!collapsedDates.has(d) && (
+                          <div className="p-3 space-y-3">
+                            {limited[d].map(renderCard)}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                    {Object.keys(groups).length > Object.keys(limited).length && (
+                      <div className="text-center">
+                        <button className="btn-secondary" onClick={()=>setShowAll(true)}>View All</button>
+                      </div>
+                    )}
+                  </div>
+                );
+              })()
             )}
           </div>
 
-          {/* Resources */}
-          <div className="card" id="resources">
-            <SectionTitle>Resources</SectionTitle>
-            {suggested.length > 0 && (
-              <div className="mb-4">
-                <p className="text-sm font-medium text-gray-900">Suggested for Today's Students</p>
-                <div className="mt-2 grid grid-cols-1 md:grid-cols-2 gap-3">
-                  {suggested.map(r => (
-                    <a key={`sugg-${r.id}`} href={r.url} target="_blank" rel="noreferrer" className="p-3 border rounded hover:bg-gray-50">
-                      <p className="font-medium text-gray-900">{r.title}</p>
-                      <p className="text-xs text-gray-600">{r.description || ''}</p>
-                    </a>
-                  ))}
-                </div>
-              </div>
-            )}
-            {resources.length === 0 ? (
-              <div className="text-sm text-gray-500">No resources yet.</div>
-            ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {resources.map(r => (
-                  <a key={r.id} href={r.url} target="_blank" rel="noreferrer" className="p-4 border rounded hover:bg-gray-50">
-                    <p className="font-medium text-gray-900">{r.title}</p>
-                    <p className="text-sm text-gray-600">{r.description || ''}</p>
-                  </a>
-                ))}
-              </div>
-            )}
-          </div>
+          {/* Resources section removed */}
         </div>
 
-        {/* Availability + Profile */}
+        {/* Availability (Profile moved out of dashboard) */}
         <div className="lg:col-span-1 space-y-6">
           {/* Availability */}
           <div className="card" id="availability">
@@ -442,67 +479,7 @@ const Dashboard = () => {
             </div>
           </div>
 
-          {/* Profile Settings */}
-          <div className="card" id="profile">
-            <SectionTitle>Profile Settings</SectionTitle>
-            {!profile ? (
-              <div className="text-sm text-gray-500">Loading profile…</div>
-            ) : (
-              <div className="space-y-3">
-                {!editProfile ? (
-                  <>
-                    <div>
-                      <p className="text-sm text-gray-600">Name</p>
-                      <p className="font-medium text-gray-900">{profile.name}</p>
-                    </div>
-                    <div>
-                      <p className="text-sm text-gray-600">Specialization</p>
-                      <p className="font-medium text-gray-900">{profile.specialization || '—'}</p>
-                    </div>
-                    <div>
-                      <p className="text-sm text-gray-600">Experience</p>
-                      <p className="font-medium text-gray-900">{profile.experience || '—'}</p>
-                    </div>
-                    <div>
-                      <p className="text-sm text-gray-600">Bio</p>
-                      <p className="font-medium text-gray-900 whitespace-pre-wrap">{profile.bio || '—'}</p>
-                    </div>
-                    <div>
-                      <p className="text-sm text-gray-600">Phone</p>
-                      <p className="font-medium text-gray-900">{profile.phone || '—'}</p>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <button onClick={()=>setEditProfile(true)} className="btn-secondary inline-flex items-center text-sm"><Edit2 className="w-4 h-4 mr-1"/>Edit</button>
-                      <span className={`text-xs ${profile.active ? 'text-green-600' : 'text-yellow-700'}`}>{profile.active ? 'Active' : 'Pending Approval'}</span>
-                    </div>
-                  </>
-                ) : (
-                  <>
-                    <div>
-                      <label className="block text-sm text-gray-700 mb-1">Specialization</label>
-                      <input value={profileDraft.specialization} onChange={(e)=>setProfileDraft(d=>({...d, specialization: e.target.value}))} className="input-field" />
-                    </div>
-                    <div>
-                      <label className="block text-sm text-gray-700 mb-1">Experience</label>
-                      <input value={profileDraft.experience} onChange={(e)=>setProfileDraft(d=>({...d, experience: e.target.value}))} className="input-field" />
-                    </div>
-                    <div>
-                      <label className="block text-sm text-gray-700 mb-1">Bio</label>
-                      <textarea rows={3} value={profileDraft.bio} onChange={(e)=>setProfileDraft(d=>({...d, bio: e.target.value}))} className="input-field" />
-                    </div>
-                    <div>
-                      <label className="block text-sm text-gray-700 mb-1">Phone</label>
-                      <input value={profileDraft.phone} onChange={(e)=>setProfileDraft(d=>({...d, phone: e.target.value}))} className="input-field" />
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <button onClick={saveProfile} className="btn-primary inline-flex items-center text-sm"><Save className="w-4 h-4 mr-1"/>Save</button>
-                      <button onClick={()=>{ setEditProfile(false); setProfileDraft({ specialization: profile.specialization||'', experience: profile.experience||'', bio: profile.bio||'', phone: profile.phone||'' }); }} className="btn-secondary inline-flex items-center text-sm"><X className="w-4 h-4 mr-1"/>Cancel</button>
-                    </div>
-                  </>
-                )}
-              </div>
-            )}
-          </div>
+          {/* Profile settings removed from dashboard; move to separate Profile page later */}
         </div>
       </div>
     </div>

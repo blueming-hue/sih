@@ -43,7 +43,8 @@ const Register = () => {
         };
       }
 
-      const result = await registerUser(data.email, data.password, payload);
+      const emailForAuth = data.role === USER_ROLES.COUNSELLOR ? data.email : data.collegeEmail;
+      const result = await registerUser(emailForAuth, data.password, payload);
 
       if (result.success) {
         toast.success('Account created successfully! Please check your email for verification.');
@@ -110,31 +111,33 @@ const Register = () => {
               )}
             </div>
 
-            <div>
-              <label htmlFor="email" className="block text-sm font-medium text-gray-700">
-                Email address
-              </label>
-              <div className="mt-1 relative">
-                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                  <Mail className="h-5 w-5 text-gray-400" />
+            {role === USER_ROLES.COUNSELLOR && (
+              <div>
+                <label htmlFor="email" className="block text-sm font-medium text-gray-700">
+                  Email address
+                </label>
+                <div className="mt-1 relative">
+                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                    <Mail className="h-5 w-5 text-gray-400" />
+                  </div>
+                  <input
+                    {...register('email', {
+                      required: 'Email is required',
+                      pattern: {
+                        value: /^[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}$/i,
+                        message: 'Invalid email address'
+                      }
+                    })}
+                    type="email"
+                    className="input-field pl-10"
+                    placeholder="Enter your email"
+                  />
                 </div>
-                <input
-                  {...register('email', {
-                    required: 'Email is required',
-                    pattern: {
-                      value: /^[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}$/i,
-                      message: 'Invalid email address'
-                    }
-                  })}
-                  type="email"
-                  className="input-field pl-10"
-                  placeholder="Enter your email"
-                />
+                {errors.email && (
+                  <p className="mt-1 text-sm text-red-600">{errors.email.message}</p>
+                )}
               </div>
-              {errors.email && (
-                <p className="mt-1 text-sm text-red-600">{errors.email.message}</p>
-              )}
-            </div>
+            )}
 
             {role !== USER_ROLES.COUNSELLOR && (
               <div>
@@ -147,10 +150,10 @@ const Register = () => {
                   </div>
                   <input
                     {...register('collegeEmail', {
-                      required: role !== USER_ROLES.COUNSELLOR ? 'College email is required' : false,
+                      required: 'College email is required',
                       pattern: {
-                        value: /^[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}$/i,
-                        message: 'Invalid email address'
+                        value: /^[A-Z0-9._%+-]+@srmap\.edu\.in$/i,
+                        message: 'Please use your college email (@srmap.edu.in)'
                       }
                     })}
                     type="email"

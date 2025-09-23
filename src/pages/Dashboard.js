@@ -69,14 +69,7 @@ const Dashboard = () => {
       href: '/forum',
       tooltip: 'Discuss with peers in the forum'
     },
-    {
-      title: 'Resources',
-      description: 'Access helpful materials',
-      icon: BookOpen,
-      color: 'bg-orange-500',
-      href: '/resources',
-      tooltip: 'Read and watch curated mental health content'
-    }
+    
   ];
 
   const stats = [

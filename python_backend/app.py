@@ -56,21 +56,44 @@ def list_counsellor_appointments():
         if not db:
             return jsonify({'appointments': []})
 
-        # Avoid composite index requirement by not ordering at query level
-        stream = db.collection('appointments').where('counsellorId', '==', counsellor_id).stream()
+        # Fetch with where only (no server-side order_by to avoid composite index), then sort in Python
+        stream = db.collection('appointments') \
+            .where('counsellorId', '==', counsellor_id) \
+            .limit(limit_n) \
+            .stream()
         items = []
         for doc in stream:
             d = doc.to_dict()
             d['id'] = doc.id
             items.append(d)
-        # Sort in Python by date then time
+        # Sort by date then time client-side
         items.sort(key=lambda x: (str(x.get('appointmentDate') or ''), str(x.get('appointmentTime') or '')))
-        if limit_n and limit_n > 0:
-            items = items[:limit_n]
         return jsonify({'appointments': items})
     except Exception as e:
         logger.error(f"list_counsellor_appointments error: {e}")
-        return jsonify({'error': f'Failed to list appointments: {str(e)}'}), 500
+        return jsonify({'error': 'Internal server error'}), 500
+
+@app.route('/api/counsellor/availability/slot', methods=['POST'])
+def counsellor_upsert_availability_slot():
+    """
+    Body: { counsellorId, dateKey, time }
+    Creates or updates a slot document to available (booked: False).
+    """
+    try:
+        if not db:
+            return jsonify({'error': 'Database not available'}), 500
+        data = request.get_json() or {}
+        counsellor_id = data.get('counsellorId')
+        date_key = data.get('dateKey')
+        time = data.get('time')
+        if not counsellor_id or not date_key or not time:
+            return jsonify({'error': 'counsellorId, dateKey and time are required'}), 400
+        ref = db.document(f"counsellors/{counsellor_id}/availability/{date_key}/slots/{time}")
+        ref.set({'time': time, 'booked': False, 'updatedAt': datetime.now()}, merge=True)
+        return jsonify({'success': True})
+    except Exception as e:
+        logger.error(f"upsert_availability_slot error: {e}")
+        return jsonify({'error': 'Internal server error'}), 500
 
 
 @app.route('/api/counsellor/appointments/<appointment_id>/status', methods=['PATCH'])
@@ -156,6 +179,68 @@ def counsellor_toggle_availability():
         return jsonify({'success': True})
     except Exception as e:
         logger.error(f"toggle_availability error: {e}")
+        return jsonify({'error': 'Internal server error'}), 500
+
+@app.route('/api/counsellor/availability', methods=['GET'])
+def counsellor_get_availability():
+    """
+    Query params: counsellorId=<uid>, dateKey=YYYY-MM-DD
+    Returns available slots list for the given counsellor and date.
+    """
+    try:
+        if not db:
+            return jsonify({'error': 'Database not available'}), 500
+        counsellor_id = request.args.get('counsellorId', '')
+        date_key = request.args.get('dateKey', '')
+        if not counsellor_id or not date_key:
+            return jsonify({'error': 'counsellorId and dateKey are required'}), 400
+        col = db.collection(f"counsellors/{counsellor_id}/availability/{date_key}/slots")
+        snap = col.stream()
+        items = []
+        for d in snap:
+            data = d.to_dict() or {}
+            data['id'] = d.id
+            items.append(data)
+        # normalize and sort by time
+        def norm_time(t):
+            t = str(t or '').strip().replace('.', ':')
+            return t
+        for it in items:
+            it['time'] = norm_time(it.get('time') or it['id'])
+        items.sort(key=lambda x: str(x.get('time') or ''))
+        return jsonify({'slots': items})
+    except Exception as e:
+        logger.error(f"get_availability error: {e}")
+        return jsonify({'error': 'Internal server error'}), 500
+
+@app.route('/api/counsellor/appointments/<appointment_id>/notes/<counsellor_id>', methods=['GET'])
+def counsellor_get_note(appointment_id, counsellor_id):
+    try:
+        if not db:
+            return jsonify({'error': 'Database not available'}), 500
+        ref = db.document(f"appointments/{appointment_id}/notes/{counsellor_id}")
+        snap = ref.get()
+        if not snap.exists:
+            return jsonify({'note': None})
+        data = snap.to_dict() or {}
+        data['id'] = snap.id
+        return jsonify({'note': data})
+    except Exception as e:
+        logger.error(f"get_note error: {e}")
+        return jsonify({'error': 'Internal server error'}), 500
+
+@app.route('/api/counsellor/appointments/<appointment_id>/notes/<counsellor_id>', methods=['PUT'])
+def counsellor_put_note(appointment_id, counsellor_id):
+    try:
+        if not db:
+            return jsonify({'error': 'Database not available'}), 500
+        body = request.get_json() or {}
+        text = body.get('text', '')
+        ref = db.document(f"appointments/{appointment_id}/notes/{counsellor_id}")
+        ref.set({'text': text, 'updatedAt': datetime.now()}, merge=True)
+        return jsonify({'success': True})
+    except Exception as e:
+        logger.error(f"put_note error: {e}")
         return jsonify({'error': 'Internal server error'}), 500
 
 @app.route('/health', methods=['GET'])

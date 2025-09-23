@@ -19,6 +19,16 @@ export const USER_ROLES = {
 // Register new user
 export const registerUser = async (email, password, userData) => {
   try {
+    const role = (userData.role || USER_ROLES.STUDENT).toLowerCase();
+    // Enforce college domain for students only
+    if (role === USER_ROLES.STUDENT) {
+      const allowed = (process.env.REACT_APP_ALLOWED_EMAIL_DOMAIN || 'srmap.edu.in').toLowerCase();
+      const emailLower = String(userData.collegeEmail || email || '').toLowerCase().trim();
+      if (!emailLower.endsWith(`@${allowed}`)) {
+        throw new Error(`Please use your college email (@${allowed}) to register.`);
+      }
+    }
+
     const userCredential = await createUserWithEmailAndPassword(auth, email, password);
     const user = userCredential.user;
     
@@ -30,8 +40,6 @@ export const registerUser = async (email, password, userData) => {
       displayName: userData.displayName
     });
     
-    const role = userData.role || USER_ROLES.STUDENT;
-
     if (role === USER_ROLES.COUNSELLOR) {
       // Users collection: keep authentication basics only for counsellors
       const userDoc = {
@@ -73,7 +81,7 @@ export const registerUser = async (email, password, userData) => {
       // Students collection holds demographics for symmetry
       const studentDoc = {
         userId: user.uid,
-        collegeEmail: userData.collegeEmail ?? null,
+        collegeEmail: userData.collegeEmail ?? user.email,
         collegeName: userData.collegeName ?? null,
         year: userData.year ?? null,
         phone: userData.phone ?? null,

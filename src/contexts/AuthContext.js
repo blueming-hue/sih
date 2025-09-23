@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { onAuthStateChange, getCurrentUserData } from '../firebase/auth';
+import { auth } from '../firebase/config';
 
 const AuthContext = createContext();
 
@@ -19,20 +20,29 @@ export const AuthProvider = ({ children }) => {
   useEffect(() => {
     const unsubscribe = onAuthStateChange(async (user) => {
       setUser(user);
-      
+      let attempts = 0;
+      let fetched = null;
       if (user) {
-        // Get additional user data from Firestore
-        const result = await getCurrentUserData(user.uid);
-        if (result.success) {
-          setUserData(result.data);
+        while (attempts < 5 && !fetched) {
+          // small delay between attempts to avoid race with Firestore write after signup
+          // eslint-disable-next-line no-await-in-loop
+          const res = await getCurrentUserData(user.uid);
+          if (res.success) {
+            fetched = res.data;
+            break;
+          }
+          attempts += 1;
+          // eslint-disable-next-line no-await-in-loop
+          await new Promise(r => setTimeout(r, 300));
+        }
+        if (fetched) {
+          setUserData(fetched);
         } else {
-          console.error('Error fetching user data:', result.error);
           setUserData(null);
         }
       } else {
         setUserData(null);
       }
-      
       setLoading(false);
     });
 
@@ -43,7 +53,13 @@ export const AuthProvider = ({ children }) => {
     user,
     userData,
     loading,
-    setUserData
+    setUserData,
+    emailVerified: !!auth.currentUser?.emailVerified,
+    refreshUser: async () => {
+      if (auth.currentUser) {
+        await auth.currentUser.reload();
+      }
+    }
   };
 
   return (

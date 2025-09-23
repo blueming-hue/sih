@@ -20,6 +20,7 @@ import {
   
 } from 'firebase/firestore';
 import { db, storage } from './config';
+import { apiJson } from '../utils/api';
 import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
 
 // Collections
@@ -175,24 +176,22 @@ export const subscribeUnifiedResources = (category, onData, onError = console.er
 };
 
 // Update appointment status (counsellor or student per rules)
-export const updateAppointmentStatus = async (appointmentId, status) => {
+export const updateAppointmentStatus = async (appointmentId, status, counsellorId) => {
   try {
-    await updateDoc(doc(db, COLLECTIONS.APPOINTMENTS, appointmentId), {
-      status,
-      updatedAt: serverTimestamp()
-    });
+    // Use backend to avoid client-side permission issues
+    await apiJson(`/api/counsellor/appointments/${appointmentId}/status`, 'PATCH', { status, counsellorId });
     return { success: true };
   } catch (error) {
     return { success: false, error: error.message };
   }
 };
 
-export const rescheduleAppointment = async (appointmentId, { appointmentDate, appointmentTime }) => {
+export const rescheduleAppointment = async (appointmentId, { appointmentDate, appointmentTime }, counsellorId) => {
   try {
-    await updateDoc(doc(db, COLLECTIONS.APPOINTMENTS, appointmentId), {
+    await apiJson(`/api/counsellor/appointments/${appointmentId}/reschedule`, 'PATCH', {
       appointmentDate,
       appointmentTime,
-      updatedAt: serverTimestamp()
+      counsellorId
     });
     return { success: true };
   } catch (error) {
@@ -205,17 +204,52 @@ export const rescheduleAppointment = async (appointmentId, { appointmentDate, ap
 
 // Subscribe counsellor appointments 
 export const subscribeCounsellorAppointments = (counsellorId, onData, onError = console.error, upcomingOnly = true, maxItems = 200) => {
+  // Use polling via backend endpoint to avoid client rules issues
   if (!counsellorId) return () => {};
-  const clauses = [where('counsellorId', '==', counsellorId), orderBy('appointmentDate', 'asc'), limit(maxItems)];
-  const qRef = query(collection(db, COLLECTIONS.APPOINTMENTS), ...clauses);
-  return onSnapshot(qRef, (snap)=>{
-    let items = []; snap.forEach(d=>items.push({ id: d.id, ...d.data() }));
-    if (upcomingOnly) {
-      const todayISO = new Date().toISOString().split('T')[0];
-      items = items.filter(a => a.appointmentDate >= todayISO);
+  let cancelled = false;
+  let timer = null;
+  let intervalMs = 5000; // start at 5s
+  const MIN_INTERVAL = 3000;
+  const MAX_INTERVAL = 30000;
+
+  const scheduleNext = () => {
+    if (cancelled) return;
+    timer = setTimeout(fetchOnce, intervalMs);
+  };
+
+  const fetchOnce = async () => {
+    try {
+      const res = await apiJson(`/api/counsellor/appointments?counsellorId=${encodeURIComponent(counsellorId)}&limit=${maxItems}`, 'GET');
+      let items = res.appointments || [];
+      // Client-side sort by date, then time
+      items.sort((a,b)=>{
+        const ad = String(a.appointmentDate||'');
+        const bd = String(b.appointmentDate||'');
+        if (ad !== bd) return ad.localeCompare(bd);
+        const at = String(a.appointmentTime||'');
+        const bt = String(b.appointmentTime||'');
+        return at.localeCompare(bt);
+      });
+      if (upcomingOnly) {
+        const todayISO = new Date().toISOString().split('T')[0];
+        items = items.filter(a => String(a.appointmentDate||'') >= todayISO);
+      }
+      if (!cancelled) onData(items);
+      // success: reduce interval slightly (towards min)
+      intervalMs = Math.max(MIN_INTERVAL, Math.floor(intervalMs * 0.8));
+    } catch (e) {
+      if (!cancelled) onError(e);
+      // error: backoff
+      intervalMs = Math.min(MAX_INTERVAL, Math.floor(intervalMs * 2));
+    } finally {
+      scheduleNext();
     }
-    onData(items);
-  }, onError);
+  };
+
+  // immediate fetch
+  fetchOnce();
+
+  return () => { cancelled = true; if (timer) clearTimeout(timer); };
 };
 
 // ===== Counsellor profile helpers =====
@@ -353,13 +387,12 @@ export const updateCounsellorActive = async (counsellorId, active) => {
 // Upsert a single availability slot
 export const upsertAvailabilitySlot = async (counsellorId, dateKey, time, slotOwnerId = null) => {
   try {
-    const ownerIdForSlot = slotOwnerId || counsellorId;
-    const slotRef = doc(db, `${COLLECTIONS.COUNSELLORS}/${ownerIdForSlot}/availability/${dateKey}/slots/${time}`);
-    await setDoc(slotRef, {
-      time,
-      booked: false,
-      updatedAt: serverTimestamp()
-    }, { merge: true });
+    // Route via backend to avoid requiring client write permission
+    await apiJson('/api/counsellor/availability/slot', 'POST', {
+      counsellorId: slotOwnerId || counsellorId,
+      dateKey,
+      time
+    });
     return { success: true };
   } catch (error) {
     return { success: false, error: error.message };
@@ -473,64 +506,35 @@ export const subscribeAllCounsellors = (onData, onError = console.error, maxItem
 
 // Each slot doc: { time: 'HH:mm', booked: boolean, bookedBy?: uid, sessionId?: string, updatedAt }
 export const subscribeAvailabilitySlots = (counsellorId, dateKey, onData, onError = console.error) => {
+  // Poll backend to avoid client Firestore rule issues
   if (!counsellorId || !dateKey) return () => {};
-  const toAltDateKey = (dk) => {
-    const parts = dk.split('-');
-    if (parts.length === 3) {
-      if (parts[0].length === 4) return `${parts[2]}-${parts[1]}-${parts[0]}`; // YYYY-MM-DD -> DD-MM-YYYY
-      if (parts[2].length === 4) return `${parts[2]}-${parts[1]}-${parts[0]}`; // DD-MM-YYYY -> YYYY-MM-DD
+  let cancelled = false;
+  let timer = null;
+  let intervalMs = 7000;
+  const MIN_INTERVAL = 4000;
+  const MAX_INTERVAL = 30000;
+
+  const scheduleNext = () => { if (!cancelled) timer = setTimeout(fetchOnce, intervalMs); };
+
+  const fetchOnce = async () => {
+    try {
+      const res = await apiJson(`/api/counsellor/availability?counsellorId=${encodeURIComponent(counsellorId)}&dateKey=${encodeURIComponent(dateKey)}`, 'GET');
+      let items = res.slots || [];
+      // Only show available and active
+      items = items.filter(s => (s.active !== false) && !s.booked);
+      items.sort((a,b)=> String(a.time||'').localeCompare(String(b.time||'')));
+      if (!cancelled) onData(items);
+      intervalMs = Math.max(MIN_INTERVAL, Math.floor(intervalMs * 0.9));
+    } catch (e) {
+      if (!cancelled) onError(e);
+      intervalMs = Math.min(MAX_INTERVAL, Math.floor(intervalMs * 2));
+    } finally {
+      scheduleNext();
     }
-    return dk;
-  };
-  const altDateKey = toAltDateKey(dateKey);
-  const col1 = collection(db, `${COLLECTIONS.COUNSELLORS}/${counsellorId}/availability/${dateKey}/slots`);
-  const col2 = altDateKey !== dateKey ? collection(db, `${COLLECTIONS.COUNSELLORS}/${counsellorId}/availability/${altDateKey}/slots`) : null;
-
-  const normalizeTime = (raw) => {
-    if (!raw) return '';
-    let t = String(raw).trim().replace('.', ':');
-    const m = t.match(/^(\d{1,2}):(\d{2})\s*([AaPp][Mm])$/);
-    if (m) {
-      let h = parseInt(m[1], 10);
-      const mm = m[2];
-      const ap = m[3].toUpperCase();
-      if (ap === 'PM' && h !== 12) h += 12;
-      if (ap === 'AM' && h === 12) h = 0;
-      return `${String(h).padStart(2,'0')}:${mm}`;
-    }
-    const hm = t.match(/^(\d{1,2}):(\d{2})$/);
-    if (hm) return `${String(parseInt(hm[1],10)).padStart(2,'0')}:${hm[2]}`;
-    return t;
   };
 
-  let last1 = null;
-  let last2 = null;
-  const emit = () => {
-    const items = [];
-    const push = (snap) => {
-      snap && snap.forEach((d) => {
-        const data = d.data();
-        const time = normalizeTime(data.time || d.id);
-        items.push({ id: d.id, ...data, time });
-      });
-    };
-    push(last1);
-    push(last2);
-    const seen = new Set();
-    const uniq = items.filter(it => {
-      if (!it.time) return false;
-      if (seen.has(it.time)) return false;
-      seen.add(it.time);
-      return true;
-    });
-    const available = uniq.filter(s => (s.active !== false) && !s.booked);
-    available.sort((a,b)=> String(a.time).localeCompare(String(b.time)));
-    onData(available);
-  };
-
-  const u1 = onSnapshot(query(col1), (snap) => { last1 = snap; emit(); }, onError);
-  const u2 = col2 ? onSnapshot(query(col2), (snap) => { last2 = snap; emit(); }, onError) : null;
-  return () => { u1 && u1(); u2 && u2(); };
+  fetchOnce();
+  return () => { cancelled = true; if (timer) clearTimeout(timer); };
 };
 
 // Transactional booking to avoid double-booking
@@ -1057,9 +1061,11 @@ export const subscribeResourcesViewed = (userId, onData, onError = console.error
 // Toggle availability slot 'active' flag by counsellor
 export const toggleAvailabilityActive = async (counsellorId, dateKey, time, active) => {
   try {
-    await updateDoc(doc(db, `${COLLECTIONS.COUNSELLORS}/${counsellorId}/availability/${dateKey}/slots/${time}`), {
-      active: !!active,
-      updatedAt: serverTimestamp()
+    await apiJson('/api/counsellor/availability/toggle', 'PATCH', {
+      counsellorId,
+      dateKey,
+      time,
+      active: !!active
     });
     return { success: true };
   } catch (error) {
@@ -1070,8 +1076,7 @@ export const toggleAvailabilityActive = async (counsellorId, dateKey, time, acti
 // Counsellor private notes per appointment
 export const upsertCounsellorNote = async (appointmentId, counsellorId, { text }) => {
   try {
-    const noteRef = doc(db, `${COLLECTIONS.APPOINTMENTS}/${appointmentId}/notes/${counsellorId}`);
-    await setDoc(noteRef, { text: text || '', updatedAt: serverTimestamp() }, { merge: true });
+    await apiJson(`/api/counsellor/appointments/${appointmentId}/notes/${counsellorId}`, 'PUT', { text });
     return { success: true };
   } catch (error) {
     return { success: false, error: error.message };
@@ -1080,10 +1085,27 @@ export const upsertCounsellorNote = async (appointmentId, counsellorId, { text }
 
 export const subscribeCounsellorNotes = (appointmentId, counsellorId, onData, onError = console.error) => {
   if (!appointmentId || !counsellorId) return () => {};
-  const noteRef = doc(db, `${COLLECTIONS.APPOINTMENTS}/${appointmentId}/notes/${counsellorId}`);
-  return onSnapshot(noteRef, (snap) => {
-    onData(snap.exists() ? { id: snap.id, ...snap.data() } : null);
-  }, onError);
+  let cancelled = false;
+  let timer = null;
+  let intervalMs = 10000;
+  const MIN_INTERVAL = 5000;
+  const MAX_INTERVAL = 60000;
+  const scheduleNext = () => { if (!cancelled) timer = setTimeout(fetchOnce, intervalMs); };
+  const fetchOnce = async () => {
+    try {
+      const res = await apiJson(`/api/counsellor/appointments/${appointmentId}/notes/${counsellorId}`, 'GET');
+      const note = res.note || null;
+      if (!cancelled) onData(note);
+      intervalMs = Math.max(MIN_INTERVAL, Math.floor(intervalMs * 0.9));
+    } catch (e) {
+      if (!cancelled) onError(e);
+      intervalMs = Math.min(MAX_INTERVAL, Math.floor(intervalMs * 2));
+    } finally {
+      scheduleNext();
+    }
+  };
+  fetchOnce();
+  return () => { cancelled = true; if (timer) clearTimeout(timer); };
 };
 
 // Resources for counsellors (simple collection)

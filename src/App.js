@@ -14,6 +14,7 @@ import AccessDenied from './components/common/AccessDenied';
 import Home from './pages/Home';
 import Login from './pages/auth/Login';
 import Register from './pages/auth/Register';
+import VerifyEmail from './pages/auth/VerifyEmail';
 import Dashboard from './pages/Dashboard';
 import Chatbot from './pages/Chatbot';
 import Booking from './pages/Booking';
@@ -30,7 +31,7 @@ import CounsellorResources from './pages/counsellor/Resources';
 
 // Protected Route Component
 const ProtectedRoute = ({ children, allowedRoles = [] }) => {
-  const { user, userData, loading } = useAuth();
+  const { user, userData, loading, emailVerified } = useAuth();
 
   if (loading) {
     return <LoadingSpinner />;
@@ -42,6 +43,11 @@ const ProtectedRoute = ({ children, allowedRoles = [] }) => {
 
   if (allowedRoles.length > 0 && !allowedRoles.includes(userData?.role)) {
     return <AccessDenied />;
+  }
+
+  // Enforce email verification for students only
+  if (userData?.role === 'student' && !emailVerified) {
+    return <Navigate to="/verify" replace />;
   }
 
   return children;
@@ -74,6 +80,7 @@ const AppContent = () => {
         <Routes>
           {/* Public Routes */}
           <Route path="/" element={<RoleRedirect />} />
+          <Route path="/verify" element={<VerifyEmail />} />
           <Route 
             path="/login" 
             element={user ? <RoleRedirect /> : <Login />} 
