@@ -226,9 +226,30 @@ service cloud.firestore {
         // No updates or deletes allowed for chat messages
         allow update, delete: if false;
       }
+
+      // Typing indicators within matches
+      match /typing/{userId} {
+        // Only participants can read typing status
+        allow read: if isSignedIn() && request.auth.uid in get(/databases/$(database)/documents/matches/$(matchId)).data.participants;
+        // Only participants can update their own typing status
+        allow create, update: if isSignedIn() &&
+          request.auth.uid in get(/databases/$(database)/documents/matches/$(matchId)).data.participants &&
+          request.auth.uid == userId;
+        // Allow deletion of typing status
+        allow delete: if isSignedIn() && request.auth.uid == userId;
+      }
     }
 
-    // Group Chatrooms
+    // Group Chatrooms - Metadata
+    match /chatrooms/{roomId} {
+      // Anyone can read chatroom metadata (public groups)
+      allow read: if true;
+      // Only admins can create/update chatroom metadata
+      allow create, update: if isAdmin();
+      allow delete: if false;
+    }
+
+    // Group Chatrooms - Messages
     match /chatrooms/{roomId}/messages/{messageId} {
       // Anyone can read chatroom messages (public groups)
       allow read: if true;
@@ -236,6 +257,27 @@ service cloud.firestore {
       allow create: if isSignedIn() && request.auth.uid == request.resource.data.senderId;
       // No updates or deletes allowed for chat messages
       allow update, delete: if false;
+    }
+
+    // User presence tracking
+    match /userPresence/{userId} {
+      // Users can read their own and others' presence
+      allow read: if isSignedIn();
+      // Users can only update their own presence
+      allow create, update: if isSignedIn() && request.auth.uid == userId;
+      allow delete: if isSignedIn() && request.auth.uid == userId;
+    }
+
+    // Volunteers collection
+    match /volunteers/{volunteerId} {
+      // Anyone can read volunteer profiles (for student selection)
+      allow read: if true;
+      // Only volunteers can create their own profile
+      allow create: if isSignedIn() && request.auth.uid == request.resource.data.userId;
+      // Only volunteers can update their own profile
+      allow update: if isSignedIn() && request.auth.uid == resource.data.userId;
+      // No deletion allowed
+      allow delete: if false;
     }
 
     // Volunteer Chat System

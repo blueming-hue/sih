@@ -17,6 +17,7 @@ import Register from './pages/auth/Register';
 import VerifyEmail from './pages/auth/VerifyEmail';
 import Dashboard from './pages/Dashboard';
 import Chatbot from './pages/Chatbot';
+import Chat from './pages/Chat';
 import Booking from './pages/Booking';
 import Forum from './pages/Forum';
 import Resources from './pages/Resources';
@@ -28,6 +29,10 @@ import CounsellorDashboard from './pages/counsellor/Dashboard';
 import CounsellorBookings from './pages/counsellor/Bookings';
 import CounsellorAvailability from './pages/counsellor/Availability';
 import CounsellorResources from './pages/counsellor/Resources';
+import VolunteerDashboard from './pages/volunteer/VolunteerDashboard';
+
+// Initialize volunteers for testing (remove in production)
+import { initializeVolunteers } from './utils/initializeVolunteers';
 
 // Protected Route Component
 const ProtectedRoute = ({ children, allowedRoles = [] }) => {
@@ -61,6 +66,7 @@ const RoleRedirect = () => {
   const role = userData?.role;
   if (role === 'admin') return <Navigate to="/admin" replace />;
   if (role === 'counsellor') return <Navigate to="/counsellor" replace />;
+  if (role === 'volunteer') return <Navigate to="/volunteer" replace />;
   // default to student
   return <Navigate to="/dashboard" replace />;
 };
@@ -99,13 +105,21 @@ const AppContent = () => {
               </ProtectedRoute>
             } 
           />
-          <Route 
-            path="/chatbot" 
+          <Route
+            path="/chatbot"
             element={
               <ProtectedRoute allowedRoles={['student']}>
                 <Chatbot />
               </ProtectedRoute>
-            } 
+            }
+          />
+          <Route
+            path="/chat"
+            element={
+              <ProtectedRoute allowedRoles={['student']}>
+                <Chat />
+              </ProtectedRoute>
+            }
           />
           <Route 
             path="/booking" 
@@ -190,13 +204,23 @@ const AppContent = () => {
               </ProtectedRoute>
             } 
           />
-          <Route 
-            path="/counsellor/resources" 
+          <Route
+            path="/counsellor/resources"
             element={
               <ProtectedRoute allowedRoles={['counsellor', 'admin']}>
                 <CounsellorResources />
               </ProtectedRoute>
-            } 
+            }
+          />
+
+          {/* Volunteer Routes */}
+          <Route
+            path="/volunteer"
+            element={
+              <ProtectedRoute allowedRoles={['volunteer', 'admin']}>
+                <VolunteerDashboard />
+              </ProtectedRoute>
+            }
           />
 
           {/* 404 Route */}
@@ -220,6 +244,11 @@ const AppContent = () => {
 
 // App Component with Providers
 const App = () => {
+  // Make volunteer initialization available globally for testing
+  React.useEffect(() => {
+    window.initializeVolunteers = initializeVolunteers;
+  }, []);
+
   return (
     <Router>
       <AuthProvider>

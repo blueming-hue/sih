@@ -41,6 +41,7 @@ const Navbar = () => {
   const studentNav = [
     { name: 'Dashboard', path: '/dashboard', icon: User },
     { name: 'AI Chatbot', path: '/chatbot', icon: MessageCircle },
+    { name: 'Chat', path: '/chat', icon: MessageCircle },
     { name: 'Book Session', path: '/booking', icon: Calendar },
     { name: 'Peer Forum', path: '/forum', icon: Users },
     { name: 'Resources', path: '/resources', icon: BookOpen },
@@ -187,6 +188,18 @@ const Navbar = () => {
                   >
                     <MessageCircle className="w-4 h-4" />
                     <span>AI Chatbot</span>
+                  </Link>
+                  <Link
+                    to="/chat"
+                    onClick={() => setIsMenuOpen(false)}
+                    className={`flex items-center space-x-2 px-3 py-2 rounded-lg text-sm font-medium ${
+                      isActive('/chat')
+                        ? 'bg-primary-100 text-primary-700'
+                        : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
+                    }`}
+                  >
+                    <MessageCircle className="w-4 h-4" />
+                    <span>Chat</span>
                   </Link>
                   <Link
                     to="/booking"

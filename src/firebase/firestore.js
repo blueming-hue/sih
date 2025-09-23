@@ -37,7 +37,14 @@ export const COLLECTIONS = {
   ASSESSMENTS: 'assessments',
   NOTIFICATIONS: 'notifications',
   MOOD_SCORES: 'mood_scores',
-  RESOURCES_VIEWED: 'resources_viewed'
+  RESOURCES_VIEWED: 'resources_viewed',
+  WAITING_QUEUE: 'waitingQueue',
+  MATCHES: 'matches',
+  CHATROOMS: 'chatrooms',
+  VOLUNTEER_CHATS: 'volunteerChats',
+  VOLUNTEERS: 'volunteers',
+  USER_PRESENCE: 'userPresence',
+  PEERS: 'peers'
 };
 
 export const deleteAppointment = async (appointmentId, counsellorId) => {
@@ -1258,4 +1265,467 @@ export const uploadCounsellorResourceFile = async (ownerId, file) => {
   } catch (error) {
     return { success: false, error: error.message };
   }
+};
+
+// ===== Chat System Functions =====
+
+// Initialize chatroom metadata (run once to set up chatrooms)
+export const initializeChatrooms = async () => {
+  try {
+    const chatrooms = [
+      {
+        id: 'academics',
+        name: 'Academic Stress',
+        description: 'Discuss study pressure, exams, and academic challenges',
+        category: 'academics',
+        isActive: true,
+        participantCount: 0,
+        createdAt: serverTimestamp()
+      },
+      {
+        id: 'stress',
+        name: 'Stress & Burnout',
+        description: 'Share coping strategies for stress and burnout',
+        category: 'stress',
+        isActive: true,
+        participantCount: 0,
+        createdAt: serverTimestamp()
+      },
+      {
+        id: 'anxiety',
+        name: 'Anxiety Support',
+        description: 'Support for anxiety and panic-related concerns',
+        category: 'anxiety',
+        isActive: true,
+        participantCount: 0,
+        createdAt: serverTimestamp()
+      },
+      {
+        id: 'depression',
+        name: 'Depression Support',
+        description: 'Understanding and support for depression',
+        category: 'depression',
+        isActive: true,
+        participantCount: 0,
+        createdAt: serverTimestamp()
+      },
+      {
+        id: 'selfharm',
+        name: 'Self-Harm Thoughts',
+        description: 'Safe space for those struggling with self-harm thoughts',
+        category: 'selfharm',
+        isActive: true,
+        participantCount: 0,
+        createdAt: serverTimestamp()
+      },
+      {
+        id: 'relationships',
+        name: 'Relationships',
+        description: 'Discuss family, friends, and romantic relationships',
+        category: 'relationships',
+        isActive: true,
+        participantCount: 0,
+        createdAt: serverTimestamp()
+      },
+      {
+        id: 'sleep',
+        name: 'Sleep Issues',
+        description: 'Support for sleep disorders and insomnia',
+        category: 'sleep',
+        isActive: true,
+        participantCount: 0,
+        createdAt: serverTimestamp()
+      }
+    ];
+
+    for (const room of chatrooms) {
+      await setDoc(doc(db, COLLECTIONS.CHATROOMS, room.id), room);
+    }
+
+    return { success: true };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+};
+
+// Get chatroom metadata
+export const getChatrooms = async () => {
+  try {
+    const querySnapshot = await getDocs(collection(db, COLLECTIONS.CHATROOMS));
+    const chatrooms = [];
+    querySnapshot.forEach((doc) => {
+      chatrooms.push({ id: doc.id, ...doc.data() });
+    });
+    return { success: true, data: chatrooms };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+};
+
+// Subscribe to chatroom metadata
+export const subscribeChatrooms = (onData, onError = console.error) => {
+  const q = query(collection(db, COLLECTIONS.CHATROOMS), where('isActive', '==', true));
+  return onSnapshot(q, (snapshot) => {
+    const chatrooms = [];
+    snapshot.forEach((doc) => {
+      chatrooms.push({ id: doc.id, ...doc.data() });
+    });
+    onData(chatrooms);
+  }, onError);
+};
+
+// User presence functions
+export const updateUserPresence = async (userId, isOnline, currentRoom = null) => {
+  try {
+    await setDoc(doc(db, COLLECTIONS.USER_PRESENCE, userId), {
+      userId,
+      isOnline,
+      currentRoom,
+      lastSeen: serverTimestamp()
+    });
+    return { success: true };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+};
+
+export const subscribeRoomPresence = (roomId, onData, onError = console.error) => {
+  const q = query(
+    collection(db, COLLECTIONS.USER_PRESENCE),
+    where('currentRoom', '==', roomId),
+    where('isOnline', '==', true)
+  );
+  return onSnapshot(q, (snapshot) => {
+    onData(snapshot.size);
+  }, onError);
+};
+
+// Volunteer functions
+export const createVolunteerProfile = async (volunteerData) => {
+  try {
+    const docRef = await addDoc(collection(db, COLLECTIONS.VOLUNTEERS), {
+      ...volunteerData,
+      isOnline: false,
+      isAvailable: true,
+      totalChats: 0,
+      rating: 0,
+      ratingCount: 0,
+      createdAt: serverTimestamp()
+    });
+    return { success: true, id: docRef.id };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+};
+
+export const getVolunteers = async () => {
+  try {
+    const q = query(
+      collection(db, COLLECTIONS.VOLUNTEERS),
+      where('isAvailable', '==', true),
+      orderBy('rating', 'desc')
+    );
+    const querySnapshot = await getDocs(q);
+    const volunteers = [];
+    querySnapshot.forEach((doc) => {
+      volunteers.push({ id: doc.id, ...doc.data() });
+    });
+    return { success: true, data: volunteers };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+};
+
+export const subscribeVolunteers = (onData, onError = console.error) => {
+  const q = query(
+    collection(db, COLLECTIONS.VOLUNTEERS),
+    where('isAvailable', '==', true),
+    orderBy('rating', 'desc')
+  );
+  return onSnapshot(q, (snapshot) => {
+    const volunteers = [];
+    snapshot.forEach((doc) => {
+      volunteers.push({ id: doc.id, ...doc.data() });
+    });
+    onData(volunteers);
+  }, onError);
+};
+
+export const updateVolunteerStatus = async (volunteerId, isOnline, isAvailable = true) => {
+  try {
+    await updateDoc(doc(db, COLLECTIONS.VOLUNTEERS, volunteerId), {
+      isOnline,
+      isAvailable,
+      lastSeen: serverTimestamp()
+    });
+    return { success: true };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+};
+
+// Anonymous 1:1 Chat Functions
+export const addToWaitingQueue = async (userId, alias) => {
+  try {
+    await setDoc(doc(db, COLLECTIONS.WAITING_QUEUE, userId), {
+      userId,
+      alias,
+      timestamp: serverTimestamp(),
+      looking: true
+    });
+    return { success: true };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+};
+
+export const removeFromWaitingQueue = async (userId) => {
+  try {
+    await deleteDoc(doc(db, COLLECTIONS.WAITING_QUEUE, userId));
+    return { success: true };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+};
+
+export const createMatch = async (user1Id, user1Alias, user2Id, user2Alias) => {
+  try {
+    const matchRef = await addDoc(collection(db, COLLECTIONS.MATCHES), {
+      participants: [user1Id, user2Id],
+      aliases: {
+        [user1Id]: user1Alias,
+        [user2Id]: user2Alias
+      },
+      createdAt: serverTimestamp(),
+      active: true
+    });
+    return { success: true, id: matchRef.id };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+};
+
+export const endMatch = async (matchId) => {
+  try {
+    await updateDoc(doc(db, COLLECTIONS.MATCHES, matchId), {
+      active: false,
+      endedAt: serverTimestamp()
+    });
+    return { success: true };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+};
+
+export const sendMatchMessage = async (matchId, senderId, alias, text) => {
+  try {
+    await addDoc(collection(db, `${COLLECTIONS.MATCHES}/${matchId}/messages`), {
+      senderId,
+      alias,
+      text,
+      timestamp: serverTimestamp()
+    });
+    return { success: true };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+};
+
+// Group Chatroom Functions
+export const sendChatroomMessage = async (roomId, senderId, alias, text) => {
+  try {
+    await addDoc(collection(db, `${COLLECTIONS.CHATROOMS}/${roomId}/messages`), {
+      senderId,
+      alias,
+      text,
+      timestamp: serverTimestamp(),
+      room: roomId
+    });
+    return { success: true };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+};
+
+export const subscribeChatroomMessages = (roomId, onData, onError = console.error, maxItems = 100) => {
+  const messagesQuery = query(
+    collection(db, `${COLLECTIONS.CHATROOMS}/${roomId}/messages`),
+    orderBy('timestamp', 'desc'),
+    limit(maxItems)
+  );
+
+  return onSnapshot(messagesQuery, (snapshot) => {
+    const messagesList = [];
+    snapshot.forEach((doc) => {
+      messagesList.push({ id: doc.id, ...doc.data() });
+    });
+    // Reverse to show newest at bottom
+    onData(messagesList.reverse());
+  }, onError);
+};
+
+// Volunteer Chat Functions
+export const createVolunteerChat = async (studentId, studentAlias, volunteerId, volunteerName) => {
+  try {
+    const chatRef = await addDoc(collection(db, COLLECTIONS.VOLUNTEER_CHATS), {
+      studentId,
+      studentAlias,
+      volunteerId,
+      volunteerName,
+      status: 'active',
+      createdAt: serverTimestamp(),
+      lastMessageAt: serverTimestamp()
+    });
+    return { success: true, id: chatRef.id };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+};
+
+export const sendVolunteerMessage = async (chatId, senderId, senderType, alias, text) => {
+  try {
+    await addDoc(collection(db, `${COLLECTIONS.VOLUNTEER_CHATS}/${chatId}/messages`), {
+      senderId,
+      senderType, // 'student' or 'volunteer'
+      alias,
+      text,
+      timestamp: serverTimestamp()
+    });
+
+    // Update last message time
+    await updateDoc(doc(db, COLLECTIONS.VOLUNTEER_CHATS, chatId), {
+      lastMessageAt: serverTimestamp()
+    });
+
+    return { success: true };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+};
+
+export const endVolunteerChat = async (chatId) => {
+  try {
+    await updateDoc(doc(db, COLLECTIONS.VOLUNTEER_CHATS, chatId), {
+      status: 'ended',
+      endedAt: serverTimestamp()
+    });
+    return { success: true };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+};
+
+export const subscribeVolunteerChats = (studentId, onData, onError = console.error) => {
+  const chatsQuery = query(
+    collection(db, COLLECTIONS.VOLUNTEER_CHATS),
+    where('studentId', '==', studentId),
+    orderBy('lastMessageAt', 'desc')
+  );
+
+  return onSnapshot(chatsQuery, (snapshot) => {
+    const chatsList = [];
+    snapshot.forEach((doc) => {
+      chatsList.push({ id: doc.id, ...doc.data() });
+    });
+    onData(chatsList);
+  }, onError);
+};
+
+export const subscribeVolunteerMessages = (chatId, onData, onError = console.error) => {
+  const messagesQuery = query(
+    collection(db, `${COLLECTIONS.VOLUNTEER_CHATS}/${chatId}/messages`),
+    orderBy('timestamp', 'asc')
+  );
+
+  return onSnapshot(messagesQuery, (snapshot) => {
+    const messagesList = [];
+    snapshot.forEach((doc) => {
+      messagesList.push({ id: doc.id, ...doc.data() });
+    });
+    onData(messagesList);
+  }, onError);
+};
+
+// Peer Management Functions
+export const addPeer = async (userId, peerUid, peerAlias, fromMatchId = null) => {
+  try {
+    await addDoc(collection(db, COLLECTIONS.PEERS), {
+      userId,
+      peerUid,
+      peerAlias,
+      addedAt: serverTimestamp(),
+      fromMatch: fromMatchId
+    });
+    return { success: true };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+};
+
+export const getPeers = async (userId) => {
+  try {
+    const q = query(
+      collection(db, COLLECTIONS.PEERS),
+      where('userId', '==', userId),
+      orderBy('addedAt', 'desc')
+    );
+
+    const querySnapshot = await getDocs(q);
+    const peers = [];
+    querySnapshot.forEach((doc) => {
+      peers.push({ id: doc.id, ...doc.data() });
+    });
+
+    return { success: true, data: peers };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+};
+
+export const subscribePeers = (userId, onData, onError = console.error) => {
+  const peersQuery = query(
+    collection(db, COLLECTIONS.PEERS),
+    where('userId', '==', userId),
+    orderBy('addedAt', 'desc')
+  );
+
+  return onSnapshot(peersQuery, (snapshot) => {
+    const peersList = [];
+    snapshot.forEach((doc) => {
+      peersList.push({ id: doc.id, ...doc.data() });
+    });
+    onData(peersList);
+  }, onError);
+};
+
+// Match subscription functions
+export const subscribeUserMatches = (userId, onData, onError = console.error) => {
+  const matchQuery = query(
+    collection(db, COLLECTIONS.MATCHES),
+    where('participants', 'array-contains', userId),
+    where('active', '==', true)
+  );
+
+  return onSnapshot(matchQuery, (snapshot) => {
+    const matches = [];
+    snapshot.forEach((doc) => {
+      matches.push({ id: doc.id, ...doc.data() });
+    });
+    onData(matches);
+  }, onError);
+};
+
+export const subscribeMatchMessages = (matchId, onData, onError = console.error) => {
+  const messagesQuery = query(
+    collection(db, `${COLLECTIONS.MATCHES}/${matchId}/messages`),
+    orderBy('timestamp', 'asc')
+  );
+
+  return onSnapshot(messagesQuery, (snapshot) => {
+    const messagesList = [];
+    snapshot.forEach((doc) => {
+      messagesList.push({ id: doc.id, ...doc.data() });
+    });
+    onData(messagesList);
+  }, onError);
 };
